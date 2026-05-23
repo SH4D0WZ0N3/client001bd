@@ -1,9 +1,56 @@
+import asyncio
 from pyrogram import Client
-from pyrogram.errors import PeerIdInvalid, ChannelInvalid
+from pyrogram.errors import PeerIdInvalid, ChannelInvalid, FloodWait
 from loguru import logger
 from app.utils.config import settings
 from app.database.repositories import state_repo
 from app.services.queue_manager import queue_manager
+
+_PEER_RESOLVE_RETRIES = 20
+_PEER_RESOLVE_DELAY = 15  # seconds between retries
+
+
+async def _resolve_peer_with_retry(client: Client) -> None:
+    """
+    Attempts to resolve the source channel peer repeatedly.
+    For a bot client, the access_hash only becomes available after the bot
+    receives at least one update from that channel OR after successful
+    get_chat() — which itself requires a prior update on a fresh session.
+
+    Strategy: keep retrying with delays. Once the bot is an admin and
+    has received at least one message from the channel (or the session
+    already has the peer cached from a previous run), this succeeds.
+    """
+    last_exc = None
+    for attempt in range(1, _PEER_RESOLVE_RETRIES + 1):
+        try:
+            chat = await client.get_chat(settings.SOURCE_CHANNEL_ID)
+            logger.info(
+                f"Source channel resolved: '{chat.title}' "
+                f"(id={chat.id}, type={chat.type})"
+            )
+            return
+        except FloodWait as exc:
+            logger.warning(f"FloodWait {exc.value}s during peer resolution.")
+            await asyncio.sleep(exc.value)
+        except (PeerIdInvalid, ChannelInvalid) as exc:
+            last_exc = exc
+            logger.warning(
+                f"Source channel peer not yet resolved "
+                f"(attempt {attempt}/{_PEER_RESOLVE_RETRIES}). "
+                f"Ensure bot is admin in source channel. "
+                f"Retrying in {_PEER_RESOLVE_DELAY}s…"
+            )
+            await asyncio.sleep(_PEER_RESOLVE_DELAY)
+        except Exception as exc:
+            raise RuntimeError(f"Unexpected error resolving source channel: {exc}")
+
+    raise RuntimeError(
+        f"Cannot resolve source channel {settings.SOURCE_CHANNEL_ID} "
+        f"after {_PEER_RESOLVE_RETRIES} attempts. "
+        f"Last error: {last_exc}. "
+        f"Check SOURCE_CHANNEL_ID is correct and bot is an admin in that channel."
+    )
 
 
 async def initial_channel_scan(client: Client) -> None:
@@ -14,13 +61,9 @@ async def initial_channel_scan(client: Client) -> None:
     Skipped entirely when state already records a processed message ID that
     is strictly greater than START_MESSAGE_ID.
 
-    Pyrogram 2.x get_chat_history() does NOT support a `reverse` parameter.
-    Messages are returned newest → oldest. We collect, then sort ascending.
-
-    Peer resolution: get_chat() must be called before get_chat_history() so
-    that Pyrogram's internal peer cache is populated for this channel ID.
-    Without this, any channel the bot hasn't interacted with yet raises
-    PeerIdInvalid even with a correct numeric ID.
+    Peer resolution is retried up to _PEER_RESOLVE_RETRIES times with delays,
+    so the scan can succeed even if the bot session is fresh and hasn't yet
+    received any update from the source channel.
     """
     state = await state_repo.get_state()
     if state is not None and state.last_processed_message_id > settings.START_MESSAGE_ID:
@@ -30,23 +73,9 @@ async def initial_channel_scan(client: Client) -> None:
         )
         return
 
-    # --- Peer resolution ---
-    # Must be called before any history/message operations.
-    # Populates Pyrogram's internal peer cache for this channel.
-    try:
-        chat = await client.get_chat(settings.SOURCE_CHANNEL_ID)
-        logger.info(
-            f"Source channel resolved: '{chat.title}' "
-            f"(id={chat.id}, type={chat.type})"
-        )
-    except (PeerIdInvalid, ChannelInvalid) as exc:
-        raise RuntimeError(
-            f"Cannot resolve source channel {settings.SOURCE_CHANNEL_ID}. "
-            f"Ensure the bot is an admin/member of that channel. Error: {exc}"
-        )
+    # This blocks until peer is resolved or raises after all retries exhausted.
+    await _resolve_peer_with_retry(client)
 
-    # offset_id=N means "fetch messages with id < N".
-    # START_MESSAGE_ID + 1 ensures the message at START_MESSAGE_ID is included.
     offset = settings.START_MESSAGE_ID + 1
 
     logger.info(
@@ -71,7 +100,6 @@ async def initial_channel_scan(client: Client) -> None:
             logger.warning("Initial scan found no messages to queue.")
             return
 
-        # Sort ascending so queue insertion order matches source chronology.
         collected.sort(key=lambda m: m.id)
 
         logger.info(
