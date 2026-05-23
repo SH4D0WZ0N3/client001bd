@@ -1,3 +1,13 @@
+"""
+TelegramSender — copies source channel content to the target channel.
+
+Fixes applied:
+  HR-3: copy_media_group fallback now passes parse_mode=HTML so captions
+        with HTML formatting are rendered correctly.
+  HR-4: Watermarked media group uses InputMediaDocument for documents/audio
+        instead of incorrectly wrapping them in InputMediaVideo.
+"""
+
 import asyncio
 import io
 import math
@@ -23,19 +33,17 @@ except ImportError:
 
 _CAPTION_MAX_LEN = 1024
 
-# Use the WATERMARK env var (not WATERMARK_TEXT — the config field is WATERMARK)
 _WATERMARK_TEXT: str = settings.WATERMARK or ""
 _WATERMARK_COUNT: int = int(getattr(settings, "WATERMARK_COUNT", 4))
 _WATERMARK_OPACITY: int = int(getattr(settings, "WATERMARK_OPACITY", 30))
 _WATERMARK_ROTATION: int = int(getattr(settings, "WATERMARK_ROTATION", -35))
 _WATERMARK_FONT_SCALE: float = float(getattr(settings, "WATERMARK_FONT_SCALE", 0.04))
 
-# Disable watermarking if no text is configured
 _WATERMARK_ENABLED: bool = _PIL_AVAILABLE and bool(_WATERMARK_TEXT)
 
 
 # ---------------------------------------------------------------------------
-# Watermark core  (runs in executor — CPU-bound)
+# Watermark core  (CPU-bound — called via run_in_executor)
 # ---------------------------------------------------------------------------
 
 def _load_font(font_size: int):
@@ -62,7 +70,6 @@ def _make_text_stamp(text, font, opacity: int, rotation: int) -> "Image.Image":
     bbox = draw.textbbox((0, 0), text, font=font)
     tw = bbox[2] - bbox[0] + 20
     th = bbox[3] - bbox[1] + 20
-
     txt_img = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
     d = ImageDraw.Draw(txt_img)
     d.text((10, 10), text, font=font, fill=(255, 255, 255, opacity))
@@ -70,36 +77,28 @@ def _make_text_stamp(text, font, opacity: int, rotation: int) -> "Image.Image":
 
 
 def _apply_watermark_sync(image_bytes: bytes) -> bytes:
-    """
-    CPU-bound. Must be called via run_in_executor — never directly in async code.
-    Returns processed JPEG bytes, or the original bytes on any failure.
-    """
+    """CPU-bound. Never call directly from async code — use run_in_executor."""
     if not _WATERMARK_ENABLED:
         return image_bytes
-
     try:
         img = Image.open(io.BytesIO(image_bytes))
         try:
             img = ImageOps.exif_transpose(img)
         except Exception:
             pass
-
         img = img.convert("RGBA")
         w, h = img.size
-
         font_size = max(16, int(min(w, h) * _WATERMARK_FONT_SCALE))
         font = _load_font(font_size)
         stamp = _make_text_stamp(
             _WATERMARK_TEXT, font, _WATERMARK_OPACITY, _WATERMARK_ROTATION
         )
         sw, sh = stamp.size
-
         overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         count = max(1, _WATERMARK_COUNT)
         cols = math.ceil(math.sqrt(count))
         rows = math.ceil(count / cols)
         positions: List[Tuple[int, int]] = []
-
         for row in range(rows):
             for col in range(cols):
                 if len(positions) >= count:
@@ -107,22 +106,18 @@ def _apply_watermark_sync(image_bytes: bytes) -> bytes:
                 x = int((col + 0.5) * w / cols) - sw // 2
                 y = int((row + 0.5) * h / rows) - sh // 2
                 positions.append((x, y))
-
         for x, y in positions:
             overlay.paste(stamp, (x, y), stamp)
-
         watermarked = Image.alpha_composite(img, overlay).convert("RGB")
         out = io.BytesIO()
         watermarked.save(out, format="JPEG", quality=92)
         return out.getvalue()
-
     except Exception as exc:
         logger.warning(f"Watermark processing failed, using original: {exc}")
         return image_bytes
 
 
 async def _apply_watermark(image_bytes: bytes) -> bytes:
-    """Async wrapper — offloads CPU work to the default thread executor."""
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, _apply_watermark_sync, image_bytes)
 
@@ -181,24 +176,20 @@ class TelegramSender:
         return caption
 
     # ------------------------------------------------------------------
-    # Watermark helper — async, runs PIL in executor
+    # Watermark helper
     # ------------------------------------------------------------------
 
     async def _download_and_watermark(self, message: Message) -> Optional[str]:
-        """
-        Downloads a photo, applies watermark in executor, saves to temp file.
-        Returns temp path or None on failure. Caller must delete the file.
-        """
         if not message.photo:
             return None
-
         if not _WATERMARK_ENABLED:
             return None
-
         try:
             raw = await self.client.download_media(message, in_memory=True)
             if raw is None:
-                logger.warning(f"download_media returned None for message {message.id}")
+                logger.warning(
+                    f"download_media returned None for message {message.id}"
+                )
                 return None
             if isinstance(raw, io.BytesIO):
                 raw_bytes = raw.getvalue()
@@ -210,10 +201,8 @@ class TelegramSender:
                     f"for message {message.id}"
                 )
                 return None
-
             processed = await _apply_watermark(raw_bytes)
             return _bytes_to_tempfile(processed, suffix=".jpg")
-
         except Exception as exc:
             logger.warning(
                 f"download_and_watermark failed for message {message.id}: {exc}"
@@ -221,7 +210,7 @@ class TelegramSender:
             return None
 
     # ------------------------------------------------------------------
-    # Public send entry-point
+    # Public entry-point
     # ------------------------------------------------------------------
 
     async def send_item(self, item: QueueItem) -> bool:
@@ -304,8 +293,8 @@ class TelegramSender:
                     return [sent]
                 except Exception as exc:
                     logger.warning(
-                        f"send_photo with watermark failed for {item.message_id}: {exc}. "
-                        "Falling back to copy_message."
+                        f"send_photo with watermark failed for {item.message_id}: "
+                        f"{exc}. Falling back to copy_message."
                     )
                 finally:
                     _cleanup(temp_path)
@@ -324,7 +313,12 @@ class TelegramSender:
     # ------------------------------------------------------------------
 
     async def _send_media_group(self, item: QueueItem) -> List[Message]:
-        from pyrogram.types import InputMediaPhoto, InputMediaVideo
+        from pyrogram.types import (
+            InputMediaPhoto,
+            InputMediaVideo,
+            InputMediaDocument,
+            InputMediaAudio,
+        )
 
         raw_messages = await self.client.get_messages(
             settings.SOURCE_CHANNEL_ID, item.message_ids
@@ -380,6 +374,7 @@ class TelegramSender:
                             raise RuntimeError(
                                 f"Watermark failed for photo in msg {msg.id}"
                             )
+
                     elif msg.video:
                         temp_paths.append(None)
                         media_inputs.append(
@@ -390,32 +385,39 @@ class TelegramSender:
                             )
                         )
                         first_caption_assigned = True
-                    else:
-                        # Document, audio, or other media — use file_id directly
+
+                    elif msg.document:
+                        # FIX HR-4: Use InputMediaDocument, not InputMediaVideo
                         temp_paths.append(None)
-                        file_id = None
-                        if msg.document:
-                            file_id = msg.document.file_id
-                        elif msg.audio:
-                            file_id = msg.audio.file_id
-                        elif msg.video_note:
-                            file_id = msg.video_note.file_id
-
-                        if file_id is None:
-                            logger.warning(
-                                f"Cannot extract file_id from message {msg.id} "
-                                f"(media type unknown). Skipping this item in group."
-                            )
-                            continue
-
                         media_inputs.append(
-                            InputMediaVideo(
-                                media=file_id,
+                            InputMediaDocument(
+                                media=msg.document.file_id,
                                 caption=item_caption,
                                 parse_mode=enums.ParseMode.HTML,
                             )
                         )
                         first_caption_assigned = True
+
+                    elif msg.audio:
+                        # FIX HR-4: Use InputMediaAudio, not InputMediaVideo
+                        temp_paths.append(None)
+                        media_inputs.append(
+                            InputMediaAudio(
+                                media=msg.audio.file_id,
+                                caption=item_caption,
+                                parse_mode=enums.ParseMode.HTML,
+                            )
+                        )
+                        first_caption_assigned = True
+
+                    else:
+                        # video_note, sticker, or other unsupported media type
+                        # in a media group — skip it rather than send a bad type
+                        temp_paths.append(None)
+                        logger.warning(
+                            f"Message {msg.id} in group {item.media_group_id} "
+                            f"has unsupported media type. Skipping this item."
+                        )
 
                 if media_inputs:
                     sent = await self.client.send_media_group(
@@ -427,17 +429,20 @@ class TelegramSender:
             except Exception as exc:
                 logger.warning(
                     f"Watermarked media group send failed for "
-                    f"{item.media_group_id}: {exc}. Falling back to copy_media_group."
+                    f"{item.media_group_id}: {exc}. "
+                    "Falling back to copy_media_group."
                 )
             finally:
                 _cleanup(*[p for p in temp_paths if p])
 
         # --- Fallback: copy_media_group (no watermark) ---
+        # FIX HR-3: Add parse_mode so HTML in captions renders correctly.
         captions: List[str] = [caption] + [""] * (len(valid) - 1)
         sent = await self.client.copy_media_group(
             chat_id=settings.TARGET_CHAT_ID,
             from_chat_id=settings.SOURCE_CHANNEL_ID,
             message_id=valid[0].id,
             captions=captions,
+            parse_mode=enums.ParseMode.HTML,
         )
         return sent

@@ -42,7 +42,6 @@ USER botuser
 
 # Railway injects PORT but this bot has no HTTP server.
 # We declare it so Railway's build system is satisfied; the app never binds it.
-ENV PORT=8080
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
