@@ -1,4 +1,5 @@
 import asyncio
+import signal
 from loguru import logger
 from app.utils.logging import setup_logging
 from app.database.database import connect_to_mongo, close_mongo_connection, ensure_indexes
@@ -16,7 +17,7 @@ def _async_exception_handler(loop, context):
 async def main() -> None:
     setup_logging()
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     loop.set_exception_handler(_async_exception_handler)
 
     await connect_to_mongo()
@@ -38,11 +39,21 @@ async def main() -> None:
 
     scheduler = setup_scheduler(sender)
 
+    stop_event = asyncio.Event()
+
+    def _handle_signal(sig):
+        logger.warning(f"Signal {sig.name} received. Initiating shutdown...")
+        stop_event.set()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, _handle_signal, sig)
+
+    logger.info("Bot is running. Waiting for stop signal...")
+
     try:
-        while True:
-            await asyncio.sleep(3600)
-    except (KeyboardInterrupt, SystemExit):
-        logger.warning("Shutdown signal received.")
+        await stop_event.wait()
+    except asyncio.CancelledError:
+        logger.warning("Main task cancelled.")
     finally:
         logger.info("Shutting down scheduler...")
         if scheduler.running:
@@ -60,5 +71,7 @@ async def main() -> None:
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except Exception as exc:
-        logger.critical(f"Fatal startup error: {exc}", exc_info=True)
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    except BaseException as exc:
+        logger.critical(f"Fatal error: {exc}", exc_info=True)
