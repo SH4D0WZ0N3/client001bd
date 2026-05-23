@@ -32,4 +32,4 @@ htmlcov/
 
 # Local volumes
 sessions/
-data/
+data/node_modules/
