@@ -47,13 +47,32 @@ class QueueRepository(BaseRepository):
             return None
         return QueueItem(**raw)
 
+    async def recover_stale_processing_items(self) -> int:
+        """
+        On startup, reset any items stuck in 'processing' from a previous
+        crashed run. Returns the count of recovered items.
+        """
+        result = await self.collection.update_many(
+            {"status": "processing"},
+            {"$set": {"status": "pending", "scheduled_at": None}},
+        )
+        count = result.modified_count
+        if count > 0:
+            logger.warning(
+                f"Recovered {count} item(s) stuck in 'processing' status "
+                f"(likely from a previous crash)."
+            )
+        return count
+
     async def update_item_status(
         self,
         item_id,
         status: str,
         error_message: Optional[str] = None,
     ) -> None:
-        object_id = item_id if isinstance(item_id, ObjectId) else ObjectId(str(item_id))
+        object_id = (
+            item_id if isinstance(item_id, ObjectId) else ObjectId(str(item_id))
+        )
 
         set_fields: dict = {"status": status}
 
@@ -91,10 +110,32 @@ class StateRepository(BaseRepository):
         return State(**doc) if doc else None
 
     async def update_state(self, last_processed_id: int) -> None:
+        """
+        Simple set — use only when you are certain the value is the latest
+        (e.g. end of bootstrap scan). Prefer update_state_safe for concurrent
+        scenarios.
+        """
         await self.collection.update_one(
             {"_id": self.state_id},
             {
                 "$set": {"last_processed_message_id": last_processed_id},
+                "$setOnInsert": {
+                    "daily_sent_count": 0,
+                    "last_reset_date": date.today().isoformat(),
+                },
+            },
+            upsert=True,
+        )
+
+    async def update_state_safe(self, last_processed_id: int) -> None:
+        """
+        Advances the cursor only if last_processed_id is greater than the
+        current value. Safe to call concurrently — cursor never rolls back.
+        """
+        await self.collection.update_one(
+            {"_id": self.state_id},
+            {
+                "$max": {"last_processed_message_id": last_processed_id},
                 "$setOnInsert": {
                     "daily_sent_count": 0,
                     "last_reset_date": date.today().isoformat(),

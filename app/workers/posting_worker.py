@@ -1,3 +1,4 @@
+import asyncio
 from datetime import date
 from loguru import logger
 from pyrogram.errors import FloodWait
@@ -5,45 +6,31 @@ from app.utils.config import settings
 from app.database.repositories import queue_repo, state_repo
 from app.services.telegram_sender import TelegramSender
 
+# Maximum seconds to sleep for a FloodWait before giving up and re-queuing.
+# Prevents the scheduler from being stalled indefinitely on very long waits.
+_MAX_FLOODWAIT_SLEEP = 300  # 5 minutes
+
 
 async def posting_job(sender: TelegramSender) -> None:
     """
     Scheduled job. Dequeues one pending item and sends it.
-
-    Lifecycle:
-        1. Reset daily counter when the calendar day rolls over.
-        2. Enforce DAILY_LIMIT.
-        3. Atomically dequeue the oldest pending item (find_one_and_update).
-        4. Send via TelegramSender.
-        5. Mark sent / failed in DB and update the daily counter.
-
-    FloodWait:
-        Re-queued as pending. The scheduler's natural interval provides the
-        backoff gap. The item will be picked up on the next tick.
     """
     logger.debug("Posting worker tick started.")
 
-    # ------------------------------------------------------------------ #
-    # 1. Daily counter reset                                               #
-    # ------------------------------------------------------------------ #
+    # Daily counter reset
     today_str = date.today().isoformat()
     state = await state_repo.get_state()
 
     if state is None or state.last_reset_date != today_str:
         logger.info(f"New day ({today_str}). Resetting daily sent counter.")
         await state_repo.reset_daily_counter()
-        # Re-fetch after upsert so count is accurate
         state = await state_repo.get_state()
 
-    # Guard: state should always exist after reset_daily_counter (upsert=True),
-    # but protect against an edge-case read failure.
     if state is None:
         logger.error("State document missing after reset. Skipping tick.")
         return
 
-    # ------------------------------------------------------------------ #
-    # 2. Daily limit check                                                 #
-    # ------------------------------------------------------------------ #
+    # Daily limit check
     if state.daily_sent_count >= settings.DAILY_LIMIT:
         logger.info(
             f"Daily limit reached ({state.daily_sent_count}/{settings.DAILY_LIMIT}). "
@@ -51,9 +38,7 @@ async def posting_job(sender: TelegramSender) -> None:
         )
         return
 
-    # ------------------------------------------------------------------ #
-    # 3. Dequeue                                                           #
-    # ------------------------------------------------------------------ #
+    # Dequeue
     item = await queue_repo.get_next_pending_item()
     if item is None:
         logger.debug("Queue empty. Nothing to post.")
@@ -61,9 +46,7 @@ async def posting_job(sender: TelegramSender) -> None:
 
     logger.info(f"Dequeued item: source_message_id={item.message_id} id={item.id}")
 
-    # ------------------------------------------------------------------ #
-    # 4 & 5. Send and update status                                        #
-    # ------------------------------------------------------------------ #
+    # Send and update status
     try:
         success = await sender.send_item(item)
 
@@ -75,16 +58,19 @@ async def posting_job(sender: TelegramSender) -> None:
                 f"Daily count: {state.daily_sent_count + 1}/{settings.DAILY_LIMIT}"
             )
         else:
-            # Permanent failure — deleted message, invalid peer, etc.
             await queue_repo.update_item_status(
                 item.id, "failed", "send_item() returned False"
             )
             logger.warning(f"Item {item.id} marked as failed (permanent).")
 
     except FloodWait as exc:
+        wait_seconds = exc.value
         logger.warning(
-            f"FloodWait {exc.value}s for item {item.id}. Re-queuing as pending."
+            f"FloodWait {wait_seconds}s for item {item.id}. "
+            f"Sleeping {min(wait_seconds, _MAX_FLOODWAIT_SLEEP)}s before re-queuing."
         )
+        # Always sleep at least the required amount (capped to avoid indefinite block).
+        await asyncio.sleep(min(wait_seconds, _MAX_FLOODWAIT_SLEEP))
         await queue_repo.update_item_status(item.id, "pending")
 
     except Exception as exc:

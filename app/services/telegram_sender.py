@@ -15,7 +15,7 @@ from app.database.models import QueueItem, SentLog
 from app.database.repositories import sent_log_repo
 
 try:
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw, ImageFont, ImageOps
     _PIL_AVAILABLE = True
 except ImportError:
     _PIL_AVAILABLE = False
@@ -23,18 +23,22 @@ except ImportError:
 
 _CAPTION_MAX_LEN = 1024
 
-_WATERMARK_TEXT: str = getattr(settings, "WATERMARK_TEXT", "Watermark")
+# Use the WATERMARK env var (not WATERMARK_TEXT — the config field is WATERMARK)
+_WATERMARK_TEXT: str = settings.WATERMARK or ""
 _WATERMARK_COUNT: int = int(getattr(settings, "WATERMARK_COUNT", 4))
 _WATERMARK_OPACITY: int = int(getattr(settings, "WATERMARK_OPACITY", 30))
 _WATERMARK_ROTATION: int = int(getattr(settings, "WATERMARK_ROTATION", -35))
 _WATERMARK_FONT_SCALE: float = float(getattr(settings, "WATERMARK_FONT_SCALE", 0.04))
 
+# Disable watermarking if no text is configured
+_WATERMARK_ENABLED: bool = _PIL_AVAILABLE and bool(_WATERMARK_TEXT)
+
 
 # ---------------------------------------------------------------------------
-# Watermark core
+# Watermark core  (runs in executor — CPU-bound)
 # ---------------------------------------------------------------------------
 
-def _load_font(font_size: int) -> "ImageFont.FreeTypeFont | ImageFont.ImageFont":
+def _load_font(font_size: int):
     font_candidates = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
@@ -52,47 +56,30 @@ def _load_font(font_size: int) -> "ImageFont.FreeTypeFont | ImageFont.ImageFont"
     return ImageFont.load_default()
 
 
-def _make_text_stamp(
-    text: str,
-    font: "ImageFont.FreeTypeFont | ImageFont.ImageFont",
-    opacity: int,
-    rotation: int,
-) -> Image.Image:
-    """
-    Render `text` onto a transparent RGBA layer, then rotate it.
-    Returns a cropped RGBA image of the rotated text block.
-    """
-    # Measure text size using a scratch canvas
+def _make_text_stamp(text, font, opacity: int, rotation: int) -> "Image.Image":
     scratch = Image.new("RGBA", (1, 1))
     draw = ImageDraw.Draw(scratch)
     bbox = draw.textbbox((0, 0), text, font=font)
     tw = bbox[2] - bbox[0] + 20
     th = bbox[3] - bbox[1] + 20
 
-    # Draw text on exact-size canvas
     txt_img = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
     d = ImageDraw.Draw(txt_img)
     d.text((10, 10), text, font=font, fill=(255, 255, 255, opacity))
-
-    # Rotate with expand so nothing is clipped
-    rotated = txt_img.rotate(rotation, expand=True, resample=Image.BICUBIC)
-    return rotated
+    return txt_img.rotate(rotation, expand=True, resample=Image.BICUBIC)
 
 
-def _apply_watermark(image_bytes: bytes) -> bytes:
+def _apply_watermark_sync(image_bytes: bytes) -> bytes:
     """
-    Apply a tiled diagonal watermark to image_bytes (JPEG/PNG/etc.).
+    CPU-bound. Must be called via run_in_executor — never directly in async code.
     Returns processed JPEG bytes, or the original bytes on any failure.
     """
-    if not _PIL_AVAILABLE:
+    if not _WATERMARK_ENABLED:
         return image_bytes
 
     try:
         img = Image.open(io.BytesIO(image_bytes))
-
-        # Normalise orientation via EXIF
         try:
-            from PIL import ImageOps
             img = ImageOps.exif_transpose(img)
         except Exception:
             pass
@@ -102,25 +89,17 @@ def _apply_watermark(image_bytes: bytes) -> bytes:
 
         font_size = max(16, int(min(w, h) * _WATERMARK_FONT_SCALE))
         font = _load_font(font_size)
-
         stamp = _make_text_stamp(
-            _WATERMARK_TEXT,
-            font,
-            _WATERMARK_OPACITY,
-            _WATERMARK_ROTATION,
+            _WATERMARK_TEXT, font, _WATERMARK_OPACITY, _WATERMARK_ROTATION
         )
         sw, sh = stamp.size
 
         overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-
         count = max(1, _WATERMARK_COUNT)
-
-        # Spread `count` stamps evenly across the image in a grid pattern
-        # Determine grid dimensions (as square-ish as possible)
         cols = math.ceil(math.sqrt(count))
         rows = math.ceil(count / cols)
-
         positions: List[Tuple[int, int]] = []
+
         for row in range(rows):
             for col in range(cols):
                 if len(positions) >= count:
@@ -132,9 +111,7 @@ def _apply_watermark(image_bytes: bytes) -> bytes:
         for x, y in positions:
             overlay.paste(stamp, (x, y), stamp)
 
-        watermarked = Image.alpha_composite(img, overlay)
-        watermarked = watermarked.convert("RGB")
-
+        watermarked = Image.alpha_composite(img, overlay).convert("RGB")
         out = io.BytesIO()
         watermarked.save(out, format="JPEG", quality=92)
         return out.getvalue()
@@ -144,12 +121,17 @@ def _apply_watermark(image_bytes: bytes) -> bytes:
         return image_bytes
 
 
+async def _apply_watermark(image_bytes: bytes) -> bytes:
+    """Async wrapper — offloads CPU work to the default thread executor."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _apply_watermark_sync, image_bytes)
+
+
 # ---------------------------------------------------------------------------
 # Temp-file helpers
 # ---------------------------------------------------------------------------
 
 def _bytes_to_tempfile(data: bytes, suffix: str = ".jpg") -> str:
-    """Write bytes to a temp file and return its path. Caller must delete."""
     fd, path = tempfile.mkstemp(suffix=suffix)
     try:
         with os.fdopen(fd, "wb") as f:
@@ -183,48 +165,55 @@ class TelegramSender:
 
     def _build_caption(self, original_html: Optional[str]) -> str:
         parts: List[str] = []
-
         if original_html:
             parts.append(original_html)
-
         if settings.FIXED_CAPTION:
             if parts:
                 parts.append("\n" + "—" * 10 + "\n")
             parts.append(settings.FIXED_CAPTION)
-
         caption = "".join(parts)
-
         if len(caption) > _CAPTION_MAX_LEN:
             logger.warning(
-                f"Caption length {len(caption)} exceeds Telegram limit "
+                f"Caption length {len(caption)} exceeds limit "
                 f"{_CAPTION_MAX_LEN}. Truncating."
             )
             caption = caption[:_CAPTION_MAX_LEN]
-
         return caption
 
     # ------------------------------------------------------------------
-    # Watermark helper — photo only
+    # Watermark helper — async, runs PIL in executor
     # ------------------------------------------------------------------
 
     async def _download_and_watermark(self, message: Message) -> Optional[str]:
         """
-        Downloads a photo from `message`, applies watermark, saves to a temp
-        file, and returns the temp path. Returns None if the message has no
-        photo or if watermarking is disabled / fails fatally.
-        Caller is responsible for deleting the returned file.
+        Downloads a photo, applies watermark in executor, saves to temp file.
+        Returns temp path or None on failure. Caller must delete the file.
         """
         if not message.photo:
             return None
 
-        try:
-            raw: bytes = await self.client.download_media(message, in_memory=True)
-            if isinstance(raw, io.BytesIO):
-                raw = raw.getvalue()  # type: ignore[assignment]
+        if not _WATERMARK_ENABLED:
+            return None
 
-            processed = _apply_watermark(raw)
-            path = _bytes_to_tempfile(processed, suffix=".jpg")
-            return path
+        try:
+            raw = await self.client.download_media(message, in_memory=True)
+            if raw is None:
+                logger.warning(f"download_media returned None for message {message.id}")
+                return None
+            if isinstance(raw, io.BytesIO):
+                raw_bytes = raw.getvalue()
+            elif isinstance(raw, bytes):
+                raw_bytes = raw
+            else:
+                logger.warning(
+                    f"Unexpected download_media return type: {type(raw)} "
+                    f"for message {message.id}"
+                )
+                return None
+
+            processed = await _apply_watermark(raw_bytes)
+            return _bytes_to_tempfile(processed, suffix=".jpg")
+
         except Exception as exc:
             logger.warning(
                 f"download_and_watermark failed for message {message.id}: {exc}"
@@ -263,7 +252,9 @@ class TelegramSender:
                 logger.success(f"Sent source message {item.message_id}.")
                 return True
 
-            logger.warning(f"send_item: no messages returned for {item.message_id}.")
+            logger.warning(
+                f"send_item: no messages returned for {item.message_id}."
+            )
             return False
 
         except FloodWait:
@@ -291,7 +282,6 @@ class TelegramSender:
         original = await self.client.get_messages(
             settings.SOURCE_CHANNEL_ID, item.message_id
         )
-
         if original is None or original.empty:
             raise MessageIdInvalid(
                 f"Message {item.message_id} is deleted or unavailable."
@@ -301,8 +291,7 @@ class TelegramSender:
             original.caption.html if original.caption else None
         )
 
-        # If the message is a photo, apply watermark
-        if original.photo and _PIL_AVAILABLE:
+        if original.photo and _WATERMARK_ENABLED:
             temp_path = await self._download_and_watermark(original)
             if temp_path:
                 try:
@@ -321,7 +310,6 @@ class TelegramSender:
                 finally:
                     _cleanup(temp_path)
 
-        # Fallback / non-photo messages
         sent = await self.client.copy_message(
             chat_id=settings.TARGET_CHAT_ID,
             from_chat_id=settings.SOURCE_CHANNEL_ID,
@@ -341,6 +329,8 @@ class TelegramSender:
         raw_messages = await self.client.get_messages(
             settings.SOURCE_CHANNEL_ID, item.message_ids
         )
+        if not isinstance(raw_messages, list):
+            raw_messages = [raw_messages]
 
         valid: List[Message] = sorted(
             [m for m in raw_messages if m and not m.empty],
@@ -354,8 +344,9 @@ class TelegramSender:
 
         if len(valid) < len(item.message_ids):
             logger.warning(
-                f"Media group {item.media_group_id}: expected {len(item.message_ids)} "
-                f"messages, got {len(valid)} (rest deleted). Sending partial album."
+                f"Media group {item.media_group_id}: expected "
+                f"{len(item.message_ids)} messages, got {len(valid)}. "
+                "Sending partial album."
             )
 
         original_html: Optional[str] = next(
@@ -363,14 +354,14 @@ class TelegramSender:
         )
         caption = self._build_caption(original_html)
 
-        # --- Try watermarked send if Pillow is available ---
-        if _PIL_AVAILABLE:
+        # --- Watermarked send path ---
+        if _WATERMARK_ENABLED:
             temp_paths: List[Optional[str]] = []
             media_inputs = []
             first_caption_assigned = False
 
             try:
-                for idx, msg in enumerate(valid):
+                for msg in valid:
                     item_caption = caption if not first_caption_assigned else ""
 
                     if msg.photo:
@@ -386,12 +377,10 @@ class TelegramSender:
                             )
                             first_caption_assigned = True
                         else:
-                            # watermark failed; fall through to copy_media_group
                             raise RuntimeError(
                                 f"Watermark failed for photo in msg {msg.id}"
                             )
                     elif msg.video:
-                        # Videos: pass through without watermark
                         temp_paths.append(None)
                         media_inputs.append(
                             InputMediaVideo(
@@ -402,11 +391,26 @@ class TelegramSender:
                         )
                         first_caption_assigned = True
                     else:
-                        # Other media types: pass through
+                        # Document, audio, or other media — use file_id directly
                         temp_paths.append(None)
+                        file_id = None
+                        if msg.document:
+                            file_id = msg.document.file_id
+                        elif msg.audio:
+                            file_id = msg.audio.file_id
+                        elif msg.video_note:
+                            file_id = msg.video_note.file_id
+
+                        if file_id is None:
+                            logger.warning(
+                                f"Cannot extract file_id from message {msg.id} "
+                                f"(media type unknown). Skipping this item in group."
+                            )
+                            continue
+
                         media_inputs.append(
-                            InputMediaPhoto(
-                                media=msg.photo.file_id if msg.photo else msg.document.file_id,
+                            InputMediaVideo(
+                                media=file_id,
                                 caption=item_caption,
                                 parse_mode=enums.ParseMode.HTML,
                             )
@@ -422,15 +426,14 @@ class TelegramSender:
 
             except Exception as exc:
                 logger.warning(
-                    f"Watermarked media group send failed for {item.media_group_id}: {exc}. "
-                    "Falling back to copy_media_group."
+                    f"Watermarked media group send failed for "
+                    f"{item.media_group_id}: {exc}. Falling back to copy_media_group."
                 )
             finally:
                 _cleanup(*[p for p in temp_paths if p])
 
         # --- Fallback: copy_media_group (no watermark) ---
         captions: List[str] = [caption] + [""] * (len(valid) - 1)
-
         sent = await self.client.copy_media_group(
             chat_id=settings.TARGET_CHAT_ID,
             from_chat_id=settings.SOURCE_CHANNEL_ID,

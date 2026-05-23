@@ -6,6 +6,7 @@ from app.bot import create_bot_instance
 from app.services.telegram_sender import TelegramSender
 from app.services.bootstrap import initial_channel_scan
 from app.scheduler.scheduler import setup_scheduler
+from app.database.repositories import queue_repo
 
 
 async def main() -> None:
@@ -14,14 +15,15 @@ async def main() -> None:
     await connect_to_mongo()
     await ensure_indexes()
 
+    # Recover any items stuck in 'processing' from a previous crash.
+    await queue_repo.recover_stale_processing_items()
+
     app = create_bot_instance()
     sender = TelegramSender(app)
 
     await app.start()
     logger.success("Bot client started.")
 
-    # Scan failure must never kill the bot process.
-    # Handlers and scheduler are independent of scan completion.
     try:
         await initial_channel_scan(app)
     except Exception as exc:
