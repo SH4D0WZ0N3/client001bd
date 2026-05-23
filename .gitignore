@@ -1,108 +1,34 @@
-# =========================
-# Python
-# =========================
-__pycache__/
-*.py[cod]
-*$py.class
-
-# C extensions
-*.so
-
-# Distribution / packaging
-.Python
-build/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# =========================
-# Virtual Environment
-# =========================
-venv/
-env/
-ENV/
-.venv/
-
-# =========================
-# Environment Variables
-# =========================
+# Secrets — NEVER commit these
 .env
 .env.local
-.env.*.local
+*.session
+*.session-journal
 
-# Keep template env public
-!.env.example
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.Python
 
-# =========================
 # Logs
-# =========================
 logs/
 *.log
 
-# =========================
-# Pyrogram Session Files
-# =========================
-*.session
-*.session-journal
-sessions/
-
-# =========================
-# MongoDB Local Data
-# =========================
-mongodb/
-mongo-data/
-
-# =========================
-# IDE / Editor
-# =========================
-.vscode/
+# IDE
 .idea/
-*.swp
-*.swo
-
-# =========================
-# OS Files
-# =========================
+.vscode/
 .DS_Store
 Thumbs.db
 
-# =========================
-# Testing / Coverage
-# =========================
+# Testing
 .pytest_cache/
 .coverage
 htmlcov/
-.tox/
-.mypy_cache/
 
-# =========================
-# Docker
-# =========================
-docker-compose.override.yml
-
-# =========================
-# Temporary Files
-# =========================
-tmp/
-temp/
-*.tmp
-
-# =========================
-# Node (if frontend/admin added later)
-# =========================
-node_modules/
-
-# =========================
-# Misc
-# =========================
-.cache/
+# Local volumes
+sessions/
+data/

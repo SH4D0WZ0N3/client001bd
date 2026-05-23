@@ -1,0 +1,1345 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Telegram Automation Bot — System Overview</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      --accent: #6366f1;
+      --accent-light: #818cf8;
+      --accent-dim: rgba(99,102,241,0.15);
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --info: #38bdf8;
+      --card: #1e2130;
+      --card-border: #2d3148;
+      --bg: #0f1117;
+      --bg2: #161927;
+      --text: #e2e8f0;
+      --text-muted: #8892a4;
+    }
+    * { box-sizing: border-box; }
+    body { background: var(--bg); color: var(--text); font-family: 'Inter', system-ui, sans-serif; }
+    .card { background: var(--card); border: 1px solid var(--card-border); border-radius: 12px; }
+    .accent-border { border-color: var(--accent); }
+    .arrow-right::after { content: "→"; margin-left: 6px; color: var(--accent-light); }
+    .arrow-down::after { content: "↓"; display: block; text-align: center; color: var(--accent-light); font-size: 1.5rem; line-height: 1; margin: 4px 0; }
+    .pulse-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:.4;} }
+    .flow-node {
+      background: var(--card);
+      border: 1.5px solid var(--card-border);
+      border-radius: 10px;
+      padding: 12px 20px;
+      text-align: center;
+      font-size: 0.85rem;
+      font-weight: 500;
+      position: relative;
+      white-space: nowrap;
+    }
+    .flow-node.active { border-color: var(--accent); background: var(--accent-dim); }
+    .flow-node.success { border-color: var(--success); background: rgba(34,197,94,.12); }
+    .flow-node.warn { border-color: var(--warning); background: rgba(245,158,11,.12); }
+    .flow-node.danger { border-color: var(--danger); background: rgba(239,68,68,.12); }
+    .flow-node.info { border-color: var(--info); background: rgba(56,189,248,.12); }
+    .connector-v { width: 2px; background: var(--card-border); margin: 0 auto; height: 28px; }
+    .connector-h { height: 2px; background: var(--card-border); flex: 1; }
+    .connector-arrow-v { width: 2px; background: var(--accent); margin: 0 auto; height: 28px; position: relative; }
+    .connector-arrow-v::after { content:'▼'; position:absolute; bottom:-8px; left:50%; transform:translateX(-50%); color:var(--accent); font-size:10px; }
+    .nav-link { color: var(--text-muted); text-decoration: none; font-size: .875rem; transition: color .2s; }
+    .nav-link:hover { color: var(--text); }
+    .tag { display:inline-block; padding:2px 10px; border-radius:20px; font-size:.75rem; font-weight:600; }
+    .section-number { width:32px; height:32px; border-radius:50%; background:var(--accent-dim); border:1.5px solid var(--accent); display:flex; align-items:center; justify-content:center; font-size:.8rem; font-weight:700; color:var(--accent-light); flex-shrink:0; }
+    .timeline-item { position:relative; padding-left:2rem; }
+    .timeline-item::before { content:''; position:absolute; left:0; top:8px; width:12px; height:12px; border-radius:50%; background:var(--accent); border:2px solid var(--bg); }
+    .timeline-item::after { content:''; position:absolute; left:5px; top:20px; width:2px; height:calc(100% + 8px); background:var(--card-border); }
+    .timeline-item:last-child::after { display:none; }
+    .stat-card { background:var(--card); border:1px solid var(--card-border); border-radius:10px; padding:1.25rem; }
+    .gradient-text { background: linear-gradient(135deg, #818cf8, #6366f1); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+    .env-row:nth-child(even) { background: rgba(255,255,255,.025); }
+    .faq-item { border-bottom: 1px solid var(--card-border); }
+    .faq-item:last-child { border-bottom: none; }
+    code { background: rgba(255,255,255,.08); padding: 1px 6px; border-radius: 4px; font-size: .85em; font-family: 'Fira Code', monospace; }
+    pre { background: #0d1117; border: 1px solid var(--card-border); border-radius: 8px; padding: 1rem 1.25rem; overflow-x: auto; font-size: .8rem; line-height: 1.6; }
+  </style>
+</head>
+<body class="min-h-screen">
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- NAVIGATION -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<nav class="sticky top-0 z-50 border-b" style="background:rgba(15,17,23,.92);border-color:var(--card-border);backdrop-filter:blur(12px)">
+  <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="pulse-dot" style="background:var(--success)"></div>
+      <span class="font-bold text-sm">Telegram Automation Bot</span>
+      <span class="tag" style="background:var(--accent-dim);color:var(--accent-light)">System Docs</span>
+    </div>
+    <div class="hidden md:flex items-center gap-6">
+      <a href="#what-it-does" class="nav-link">Overview</a>
+      <a href="#workflow" class="nav-link">Workflow</a>
+      <a href="#albums" class="nav-link">Albums</a>
+      <a href="#queue" class="nav-link">Queue</a>
+      <a href="#deployment" class="nav-link">Deployment</a>
+      <a href="#faq" class="nav-link">FAQ</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- HERO -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<header class="max-w-7xl mx-auto px-4 pt-20 pb-16 text-center">
+  <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-sm mb-6" style="background:var(--accent-dim);border:1px solid var(--accent);color:var(--accent-light)">
+    <span class="pulse-dot" style="background:var(--accent-light)"></span>
+    Creator SH4D0WZ0N3
+  </div>
+  <h1 class="text-4xl md:text-6xl font-black mb-6 leading-tight">
+    <span class="gradient-text">Telegram Content</span><br>Automation Bot
+  </h1>
+  <p class="text-lg max-w-2xl mx-auto mb-10" style="color:var(--text-muted)">
+    An always-on, queue-driven bot that automatically copies content from a private source channel and publishes it to any target group or channel — with full album support, custom captions, daily limits, and bulletproof restart recovery.
+  </p>
+  <div class="flex flex-wrap justify-center gap-3">
+    <span class="tag" style="background:rgba(34,197,94,.15);color:#4ade80;border:1px solid rgba(34,197,94,.3)">✓ 24/7 Uptime</span>
+    <span class="tag" style="background:rgba(99,102,241,.15);color:var(--accent-light);border:1px solid rgba(99,102,241,.3)">✓ Album Support</span>
+    <span class="tag" style="background:rgba(56,189,248,.15);color:#7dd3fc;border:1px solid rgba(56,189,248,.3)">✓ Queue Persists</span>
+    <span class="tag" style="background:rgba(245,158,11,.15);color:#fcd34d;border:1px solid rgba(245,158,11,.3)">✓ FloodWait Safe</span>
+    <span class="tag" style="background:rgba(239,68,68,.15);color:#fca5a5;border:1px solid rgba(239,68,68,.3)">✓ Restart Safe</span>
+  </div>
+</header>
+
+<main class="max-w-7xl mx-auto px-4 pb-24 space-y-24">
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- SECTION 1 — WHAT IT DOES -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<section id="what-it-does">
+  <div class="flex items-center gap-3 mb-8">
+    <div class="section-number">01</div>
+    <h2 class="text-2xl font-bold">What This Bot Does</h2>
+  </div>
+  <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+    <div class="card p-6">
+      <div class="text-3xl mb-3">📋</div>
+      <h3 class="font-semibold mb-2">Content Copying</h3>
+      <p class="text-sm" style="color:var(--text-muted)">Reads messages from a private source channel and copies them — without any "Forwarded from" label — to your public channel or group.</p>
+    </div>
+    <div class="card p-6">
+      <div class="text-3xl mb-3">🖼️</div>
+      <h3 class="font-semibold mb-2">Album Support</h3>
+      <p class="text-sm" style="color:var(--text-muted)">Handles multi-photo and multi-video albums correctly. All images in a group are sent together as a single album, preserving the original structure.</p>
+    </div>
+    <div class="card p-6">
+      <div class="text-3xl mb-3">✏️</div>
+      <h3 class="font-semibold mb-2">Custom Captions</h3>
+      <p class="text-sm" style="color:var(--text-muted)">Appends your watermark or channel link to every post caption automatically. Original captions are preserved; your text is added below them.</p>
+    </div>
+    <div class="card p-6">
+      <div class="text-3xl mb-3">⏱️</div>
+      <h3 class="font-semibold mb-2">Scheduled Posting</h3>
+      <p class="text-sm" style="color:var(--text-muted)">Posts one item from the queue at a configurable interval (e.g. every 30 minutes). You control exactly how fast content is published.</p>
+    </div>
+    <div class="card p-6">
+      <div class="text-3xl mb-3">📊</div>
+      <h3 class="font-semibold mb-2">Daily Limits</h3>
+      <p class="text-sm" style="color:var(--text-muted)">Caps the total number of posts per day. At midnight, the counter automatically resets and posting resumes the next day.</p>
+    </div>
+    <div class="card p-6">
+      <div class="text-3xl mb-3">🔄</div>
+      <h3 class="font-semibold mb-2">Queue Persistence</h3>
+      <p class="text-sm" style="color:var(--text-muted)">All pending content is stored in MongoDB. If the bot restarts for any reason, the queue is fully recovered and posting continues exactly where it left off.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- SECTION 2 — SYSTEM WORKFLOW -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<section id="workflow">
+  <div class="flex items-center gap-3 mb-8">
+    <div class="section-number">02</div>
+    <h2 class="text-2xl font-bold">System Workflow</h2>
+  </div>
+  <p class="mb-8" style="color:var(--text-muted)">The bot runs three independent processes simultaneously: a message listener, a queue manager, and a scheduler.</p>
+  <div class="grid md:grid-cols-3 gap-4 mb-8">
+    <div class="card p-5 border-t-2" style="border-top-color:var(--info)">
+      <div class="flex items-center gap-2 mb-3">
+        <div class="pulse-dot" style="background:var(--info)"></div>
+        <span class="text-sm font-bold" style="color:var(--info)">Process 1 — Listener</span>
+      </div>
+      <p class="text-sm" style="color:var(--text-muted)">Pyrogram client watches the source channel 24/7. Every new message triggers the handler immediately.</p>
+    </div>
+    <div class="card p-5 border-t-2" style="border-top-color:var(--accent)">
+      <div class="flex items-center gap-2 mb-3">
+        <div class="pulse-dot" style="background:var(--accent)"></div>
+        <span class="text-sm font-bold" style="color:var(--accent-light)">Process 2 — Queue Manager</span>
+      </div>
+      <p class="text-sm" style="color:var(--text-muted)">Buffers album messages, coalesces them, and inserts all content into the MongoDB queue in the correct order.</p>
+    </div>
+    <div class="card p-5 border-t-2" style="border-top-color:var(--success)">
+      <div class="flex items-center gap-2 mb-3">
+        <div class="pulse-dot" style="background:var(--success)"></div>
+        <span class="text-sm font-bold" style="color:var(--success)">Process 3 — Scheduler</span>
+      </div>
+      <p class="text-sm" style="color:var(--text-muted)">Every N seconds, dequeues the oldest pending item and sends it to the target channel. Enforces daily limit.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- SECTION 3 — CONTENT FLOW DIAGRAM -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<section id="flow-diagram">
+  <div class="flex items-center gap-3 mb-8">
+    <div class="section-number">03</div>
+    <h2 class="text-2xl font-bold">Content Flow Diagram</h2>
+  </div>
+  <div class="card p-8">
+    <!-- Main flow -->
+    <div class="flex flex-col items-center gap-1">
+
+      <!-- Row 1 -->
+      <div class="flow-node info" style="min-width:220px">
+        📁 Source Channel<br>
+        <span class="text-xs" style="color:var(--text-muted)">Private storage channel</span>
+      </div>
+      <div class="connector-arrow-v" style="background:var(--info)"></div>
+
+      <!-- Row 2 -->
+      <div class="flow-node active" style="min-width:220px">
+        👂 Message Handler<br>
+        <span class="text-xs" style="color:var(--text-muted)">Pyrogram event listener</span>
+      </div>
+
+      <!-- Branch -->
+      <div class="flex items-start gap-2 w-full justify-center mt-2">
+        <div style="color:var(--text-muted);font-size:.75rem;text-align:center;padding-top:4px">Single message</div>
+        <div style="color:var(--accent);font-size:1.5rem;padding:0 20px">⑂</div>
+        <div style="color:var(--text-muted);font-size:.75rem;text-align:center;padding-top:4px">Album (media group)</div>
+      </div>
+
+      <!-- Branch flows -->
+      <div class="flex w-full justify-center gap-16 mb-2">
+        <div class="flex flex-col items-center gap-1">
+          <div class="connector-arrow-v"></div>
+          <div class="flow-node success" style="min-width:160px">
+            ⚡ Direct Queue Insert<br>
+            <span class="text-xs" style="color:var(--text-muted)">Immediate</span>
+          </div>
+        </div>
+        <div class="flex flex-col items-center gap-1">
+          <div class="connector-arrow-v"></div>
+          <div class="flow-node warn" style="min-width:160px">
+            🧩 Album Buffer<br>
+            <span class="text-xs" style="color:var(--text-muted)">3 second debounce</span>
+          </div>
+          <div class="connector-arrow-v"></div>
+          <div class="flow-node warn" style="min-width:160px">
+            🔀 Group & Sort<br>
+            <span class="text-xs" style="color:var(--text-muted)">By message ID</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="connector-arrow-v"></div>
+
+      <!-- MongoDB -->
+      <div class="flow-node info" style="min-width:260px;font-size:.9rem">
+        🍃 MongoDB Queue<br>
+        <span class="text-xs" style="color:var(--text-muted)">status: "pending"</span>
+      </div>
+      <div class="connector-arrow-v"></div>
+
+      <!-- Scheduler -->
+      <div class="flow-node active" style="min-width:260px">
+        ⏲️ APScheduler<br>
+        <span class="text-xs" style="color:var(--text-muted)">Every N seconds • max_instances=1</span>
+      </div>
+      <div class="connector-arrow-v"></div>
+
+      <!-- Worker -->
+      <div class="flow-node active" style="min-width:260px">
+        ⚙️ Posting Worker<br>
+        <span class="text-xs" style="color:var(--text-muted)">Check limit → Dequeue → Send</span>
+      </div>
+      <div class="connector-arrow-v"></div>
+
+      <!-- Telegram Sender with branches -->
+      <div class="flow-node active" style="min-width:260px">
+        📡 Telegram Sender<br>
+        <span class="text-xs" style="color:var(--text-muted)">copy_message / copy_media_group</span>
+      </div>
+
+      <div class="flex w-full justify-center gap-8 mt-2">
+        <div class="flex flex-col items-center gap-1">
+          <div class="connector-arrow-v" style="background:var(--success)"></div>
+          <div class="flow-node success" style="min-width:130px">
+            ✅ Sent<br>
+            <span class="text-xs">count++</span>
+          </div>
+        </div>
+        <div class="flex flex-col items-center gap-1">
+          <div class="connector-arrow-v" style="background:var(--warning)"></div>
+          <div class="flow-node warn" style="min-width:130px">
+            ⏳ FloodWait<br>
+            <span class="text-xs">re-queue pending</span>
+          </div>
+        </div>
+        <div class="flex flex-col items-center gap-1">
+          <div class="connector-arrow-v" style="background:var(--danger)"></div>
+          <div class="flow-node danger" style="min-width:130px">
+            ❌ Failed<br>
+            <span class="text-xs">mark failed</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="connector-arrow-v mt-2" style="background:var(--success)"></div>
+
+      <!-- Target -->
+      <div class="flow-node success" style="min-width:260px">
+        📢 Target Channel / Group<br>
+        <span class="text-xs" style="color:var(--text-muted)">Message appears for subscribers</span>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- SECTION 4 — SOURCE → QUEUE → SCHEDULER → TARGET -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<section id="pipeline">
+  <div class="flex items-center gap-3 mb-8">
+    <div class="section-number">04</div>
+    <h2 class="text-2xl font-bold">Source → Queue → Scheduler → Target</h2>
+  </div>
+  <div class="overflow-x-auto">
+    <div class="flex items-center gap-0 min-w-max mx-auto" style="padding:1rem 0">
+
+      <div class="card p-5 text-center" style="min-width:150px;border-color:var(--info)">
+        <div class="text-2xl mb-2">📁</div>
+        <div class="font-semibold text-sm">Source Channel</div>
+        <div class="text-xs mt-1" style="color:var(--text-muted)">Private storage</div>
+      </div>
+
+      <div class="flex flex-col items-center px-2">
+        <div class="text-xs mb-1" style="color:var(--text-muted)">new messages</div>
+        <div class="h-px w-12" style="background:var(--accent)"></div>
+        <div style="color:var(--accent);margin-top:-6px">▶</div>
+      </div>
+
+      <div class="card p-5 text-center" style="min-width:150px;border-color:var(--accent)">
+        <div class="text-2xl mb-2">📋</div>
+        <div class="font-semibold text-sm">MongoDB Queue</div>
+        <div class="text-xs mt-1" style="color:var(--text-muted)">Persisted items</div>
+      </div>
+
+      <div class="flex flex-col items-center px-2">
+        <div class="text-xs mb-1" style="color:var(--text-muted)">every N seconds</div>
+        <div class="h-px w-12" style="background:var(--accent)"></div>
+        <div style="color:var(--accent);margin-top:-6px">▶</div>
+      </div>
+
+      <div class="card p-5 text-center" style="min-width:150px;border-color:var(--warning)">
+        <div class="text-2xl mb-2">⏲️</div>
+        <div class="font-semibold text-sm">Scheduler</div>
+        <div class="text-xs mt-1" style="color:var(--text-muted)">Checks limit</div>
+      </div>
+
+      <div class="flex flex-col items-center px-2">
+        <div class="text-xs mb-1" style="color:var(--text-muted)">dequeue + send</div>
+        <div class="h-px w-12" style="background:var(--accent)"></div>
+        <div style="color:var(--accent);margin-top:-6px">▶</div>
+      </div>
+
+      <div class="card p-5 text-center" style="min-width:150px;border-color:var(--success)">
+        <div class="text-2xl mb-2">📢</div>
+        <div class="font-semibold text-sm">Target Channel</div>
+        <div class="text-xs mt-1" style="color:var(--text-muted)">Public audience</div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="grid md:grid-cols-4 gap-4 mt-6">
+    <div class="card p-4">
+      <div class="text-xs font-bold mb-2" style="color:var(--info)">SOURCE</div>
+      <p class="text-xs" style="color:var(--text-muted)">The bot watches this channel in real time. Every new message — photo, video, text, album — triggers the handler immediately via Pyrogram's event system.</p>
+    </div>
+    <div class="card p-4">
+      <div class="text-xs font-bold mb-2" style="color:var(--accent-light)">QUEUE</div>
+      <p class="text-xs" style="color:var(--text-muted)">Items are stored in MongoDB with status "pending". The queue survives restarts, crashes, and redeployments. Items are never lost.</p>
+    </div>
+    <div class="card p-4">
+      <div class="text-xs font-bold mb-2" style="color:var(--warning)">SCHEDULER</div>
+      <p class="text-xs" style="color:var(--text-muted)">APScheduler fires a job every N seconds. The job checks the daily limit, dequeues one item atomically, and passes it to the sender.</p>
+    </div>
+    <div class="card p-4">
+      <div class="text-xs font-bold mb-2" style="color:var(--success)">TARGET</div>
+      <p class="text-xs" style="color:var(--text-muted)">The copy_message / copy_media_group API call sends the content without any forwarding label. Your custom caption is appended to the original.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- SECTION 5 — HOW ALBUMS WORK -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<section id="albums">
+  <div class="flex items-center gap-3 mb-8">
+    <div class="section-number">05</div>
+    <h2 class="text-2xl font-bold">How Albums Work</h2>
+  </div>
+  <div class="card p-6 mb-6" style="border-color:var(--warning)">
+    <div class="flex items-start gap-3">
+      <span class="text-2xl">⚠️</span>
+      <div>
+        <div class="font-semibold mb-1">The Album Problem</div>
+        <p class="text-sm" style="color:var(--text-muted)">When someone sends an album (multiple photos/videos at once) on Telegram, each image arrives as a <strong style="color:var(--text)">separate individual message</strong> to the bot. They all share the same <code>media_group_id</code>, but they arrive as separate events, often milliseconds apart. Without special handling, each photo would be sent individually, breaking the album.</p>
+      </div>
+    </div>
+  </div>
+
+  <h3 class="font-semibold mb-4" style="color:var(--text-muted)">The Solution — 3-Second Coalescing</h3>
+
+  <div class="card p-6">
+    <div class="flex flex-col gap-3">
+
+      <div class="flex items-center gap-4">
+        <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0" style="background:var(--accent-dim);color:var(--accent-light)">1</div>
+        <div>
+          <div class="font-medium text-sm">Photo 1 arrives</div>
+          <div class="text-xs" style="color:var(--text-muted)">Added to in-memory buffer. 3-second timer starts.</div>
+        </div>
+        <div class="ml-auto"><span class="tag" style="background:var(--accent-dim);color:var(--accent-light)">t=0s</span></div>
+      </div>
+
+      <div class="w-px h-6 ml-4" style="background:var(--card-border)"></div>
+
+      <div class="flex items-center gap-4">
+        <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0" style="background:var(--accent-dim);color:var(--accent-light)">2</div>
+        <div>
+          <div class="font-medium text-sm">Photo 2 arrives (same album)</div>
+          <div class="text-xs" style="color:var(--text-muted)">Added to buffer. Timer RESETS to 3 seconds.</div>
+        </div>
+        <div class="ml-auto"><span class="tag" style="background:var(--accent-dim);color:var(--accent-light)">t=0.1s</span></div>
+      </div>
+
+      <div class="w-px h-6 ml-4" style="background:var(--card-border)"></div>
+
+      <div class="flex items-center gap-4">
+        <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0" style="background:var(--accent-dim);color:var(--accent-light)">3</div>
+        <div>
+          <div class="font-medium text-sm">Photo 3 arrives (same album)</div>
+          <div class="text-xs" style="color:var(--text-muted)">Added to buffer. Timer RESETS again.</div>
+        </div>
+        <div class="ml-auto"><span class="tag" style="background:var(--accent-dim);color:var(--accent-light)">t=0.2s</span></div>
+      </div>
+
+      <div class="w-px h-6 ml-4" style="background:var(--card-border)"></div>
+
+      <div class="flex items-center gap-4">
+        <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0" style="background:rgba(245,158,11,.2);color:var(--warning)">4</div>
+        <div>
+          <div class="font-medium text-sm">No more messages for 3 seconds</div>
+          <div class="text-xs" style="color:var(--text-muted)">Timer fires. Buffer is locked, sorted by message ID, flushed to MongoDB as ONE queue item.</div>
+        </div>
+        <div class="ml-auto"><span class="tag" style="background:rgba(245,158,11,.15);color:var(--warning)">t=3.2s</span></div>
+      </div>
+
+      <div class="w-px h-6 ml-4" style="background:var(--card-border)"></div>
+
+      <div class="flex items-center gap-4">
+        <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0" style="background:rgba(34,197,94,.2);color:var(--success)">5</div>
+        <div>
+          <div class="font-medium text-sm">Scheduler sends the album</div>
+          <div class="text-xs" style="color:var(--text-muted)"><code>copy_media_group</code> sends all photos in one API call. Album arrives intact at the target channel.</div>
+        </div>
+        <div class="ml-auto"><span class="tag" style="background:rgba(34,197,94,.15);color:var(--success)">sent</span></div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="grid md:grid-cols-2 gap-4 mt-4">
+    <div class="card p-4">
+      <div class="text-xs font-bold mb-2" style="color:var(--success)">✓ Crash Safety</div>
+      <p class="text-xs" style="color:var(--text-muted)">If the bot crashes mid-album, the unique index on <code>message_id</code> prevents duplicates when it restarts. The album is re-buffered cleanly.</p>
+    </div>
+    <div class="card p-4">
+      <div class="text-xs font-bold mb-2" style="color:var(--success)">✓ Order Guarantee</div>
+      <p class="text-xs" style="color:var(--text-muted)">All messages are sorted by their numeric ID before sending. Photos always appear in the same order as the original album.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- SECTION 6 — DAILY POSTING LIMIT LOGIC -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<section id="daily-limit">
+  <div class="flex items-center gap-3 mb-8">
+    <div class="section-number">06</div>
+    <h2 class="text-2xl font-bold">Daily Posting Limit Logic</h2>
+  </div>
+  <div class="grid md:grid-cols-2 gap-8">
+    <div>
+      <div class="card p-6">
+        <h3 class="font-semibold mb-4">Decision Flow (Every Scheduler Tick)</h3>
+        <div class="flex flex-col gap-2">
+          <div class="flow-node active">⏲️ Scheduler Tick Fires</div>
+          <div class="connector-arrow-v mx-auto"></div>
+          <div class="flow-node" style="border-color:var(--info)">Read date from MongoDB State</div>
+          <div class="connector-arrow-v mx-auto"></div>
+          <div class="flow-node warn">Is today's date ≠ last_reset_date?</div>
+          <div class="flex gap-4 justify-center mt-1">
+            <div class="flex flex-col items-center gap-1">
+              <div class="text-xs" style="color:var(--success)">YES</div>
+              <div class="connector-arrow-v" style="background:var(--success)"></div>
+              <div class="flow-node success text-xs py-2 px-3">Reset counter to 0<br>Update date</div>
+            </div>
+            <div class="flex flex-col items-center gap-1 mt-6">
+              <div class="text-xs" style="color:var(--text-muted)">NO (same day)</div>
+              <div class="connector-arrow-v"></div>
+              <div class="flow-node text-xs py-2 px-3">Continue</div>
+            </div>
+          </div>
+          <div class="connector-arrow-v mx-auto mt-2"></div>
+          <div class="flow-node warn">daily_sent_count ≥ DAILY_LIMIT?</div>
+          <div class="flex gap-4 justify-center mt-1">
+            <div class="flex flex-col items-center gap-1">
+              <div class="text-xs" style="color:var(--danger)">YES</div>
+              <div class="connector-arrow-v" style="background:var(--danger)"></div>
+              <div class="flow-node danger text-xs py-2 px-3">Stop — wait<br>for tomorrow</div>
+            </div>
+            <div class="flex flex-col items-center gap-1 mt-6">
+              <div class="text-xs" style="color:var(--success)">NO</div>
+              <div class="connector-arrow-v" style="background:var(--success)"></div>
+              <div class="flow-node success text-xs py-2 px-3">Dequeue &<br>send item</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="space-y-4">
+      <div class="card p-5">
+        <div class="font-semibold mb-3">Example: DAILY_LIMIT = 20</div>
+        <div class="space-y-2">
+          <div class="flex justify-between items-center py-2 border-b" style="border-color:var(--card-border)">
+            <span class="text-sm">Posts sent today</span>
+            <div class="flex items-center gap-2">
+              <div class="h-2 rounded-full" style="width:80px;background:var(--card-border)">
+                <div class="h-2 rounded-full" style="width:40px;background:var(--success)"></div>
+              </div>
+              <span class="text-sm font-mono">8/20</span>
+            </div>
+          </div>
+          <div class="flex justify-between items-center py-2 border-b" style="border-color:var(--card-border)">
+            <span class="text-sm">Posts sent today</span>
+            <div class="flex items-center gap-2">
+              <div class="h-2 rounded-full" style="width:80px;background:var(--card-border)">
+                <div class="h-2 rounded-full" style="width:70px;background:var(--warning)"></div>
+              </div>
+              <span class="text-sm font-mono">18/20</span>
+            </div>
+          </div>
+          <div class="flex justify-between items-center py-2">
+            <span class="text-sm">Posts sent today</span>
+            <div class="flex items-center gap-2">
+              <div class="h-2 rounded-full" style="width:80px;background:var(--card-border)">
+                <div class="h-2 rounded-full" style="width:80px;background:var(--danger)"></div>
+              </div>
+              <span class="text-sm font-mono text-red-400">20/20 PAUSED</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card p-5">
+        <div class="font-semibold mb-2">Reset Behavior</div>
+        <p class="text-sm" style="color:var(--text-muted)">The counter resets at the first scheduler tick after midnight. If <code>TIMEZONE=America/New_York</code>, the reset happens at midnight New York time, not UTC.</p>
+      </div>
+      <div class="card p-5">
+        <div class="font-semibold mb-2">Queue is Not Affected</div>
+        <p class="text-sm" style="color:var(--text-muted)">When the daily limit is hit, the queue keeps accepting new items. They simply accumulate and are sent the next day, in order.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- SECTION 7 — AUTOMATIC QUEUE PROCESSING -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<section id="queue">
+  <div class="flex items-center gap-3 mb-8">
+    <div class="section-number">07</div>
+    <h2 class="text-2xl font-bold">Automatic Queue Processing</h2>
+  </div>
+  <div class="overflow-x-auto mb-6">
+    <div class="flex items-center gap-0 min-w-max">
+      <div class="flow-node" style="min-width:100px;border-color:#6366f1">⏳ pending</div>
+      <div style="width:40px;height:2px;background:var(--accent)"></div>
+      <div style="color:var(--accent);margin-left:-8px">▶</div>
+      <div class="flow-node warn ml-0" style="min-width:120px">⚙️ processing<br><span class="text-xs">(atomic lock)</span></div>
+      <div style="width:40px;height:2px;background:var(--accent)"></div>
+      <div style="color:var(--accent);margin-left:-8px">▶</div>
+      <div class="flex flex-col gap-2 ml-0">
+        <div class="flow-node success" style="min-width:100px">✅ sent</div>
+        <div class="flow-node danger" style="min-width:100px">❌ failed</div>
+        <div class="flow-node" style="min-width:100px;border-color:var(--info)">🔁 pending<br><span class="text-xs">(FloodWait)</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid md:grid-cols-2 gap-6">
+    <div class="card p-6">
+      <h3 class="font-semibold mb-3">Atomic Dequeue — No Double Sends</h3>
+      <p class="text-sm mb-3" style="color:var(--text-muted)">When the scheduler dequeues an item, it uses MongoDB's <code>find_one_and_update</code> — a single atomic operation that both finds the item AND changes its status to "processing" simultaneously.</p>
+      <pre>// What happens in one atomic MongoDB operation:
+{
+  "filter": { "status": "pending" },
+  "update": { "$set": { "status": "processing" } },
+  "sort":   [["message_id", 1]]
+}</pre>
+      <p class="text-xs mt-3" style="color:var(--text-muted)">Even if the scheduler fires twice at the exact same millisecond, they cannot claim the same item.</p>
+    </div>
+    <div class="card p-6">
+      <h3 class="font-semibold mb-3">Unique Index — No Duplicate Inserts</h3>
+      <p class="text-sm mb-3" style="color:var(--text-muted)">MongoDB enforces a unique index on <code>message_id</code> in the queue collection. If the bot tries to insert the same message twice (e.g., after a crash + restart), MongoDB rejects the duplicate silently.</p>
+      <pre>// MongoDB index (created automatically at startup)
+db.queue.createIndex(
+  { "message_id": 1 },
+  { unique: true }
+)</pre>
+      <p class="text-xs mt-3" style="color:var(--text-muted)">This is the final safety net. Even if the in-memory deduplication is bypassed, the DB prevents duplicates at the storage level.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- SECTION 8 — RESTART SAFETY -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<section id="restart-safety">
+  <div class="flex items-center gap-3 mb-8">
+    <div class="section-number">08</div>
+    <h2 class="text-2xl font-bold">Restart Safety</h2>
+  </div>
+  <p class="mb-6" style="color:var(--text-muted)">The bot is designed to survive any restart — container crash, redeployment, server reboot — without losing a single message.</p>
+  <div class="grid md:grid-cols-3 gap-4 mb-6">
+    <div class="card p-5">
+      <div class="text-2xl mb-3">🍃</div>
+      <h3 class="font-semibold mb-2">MongoDB Queue</h3>
+      <p class="text-sm" style="color:var(--text-muted)">Every pending item exists in MongoDB before the bot sends it. Restart = resume from same position. Queue never resets.</p>
+    </div>
+    <div class="card p-5">
+      <div class="text-2xl mb-3">📍</div>
+      <h3 class="font-semibold mb-2">State Cursor</h3>
+      <p class="text-sm" style="color:var(--text-muted)">The <code>last_processed_message_id</code> in MongoDB tracks which messages have been queued. On restart, the bot knows exactly where it left off.</p>
+    </div>
+    <div class="card p-5">
+      <div class="text-2xl mb-3">🔐</div>
+      <h3 class="font-semibold mb-2">Session File</h3>
+      <p class="text-sm" style="color:var(--text-muted)">Pyrogram's authentication session is stored in a persistent volume. The bot re-authenticates automatically on first run; subsequent restarts reuse the existing session.</p>
+    </div>
+  </div>
+
+  <div class="card p-6" style="border-color:var(--success)">
+    <h3 class="font-semibold mb-4">What Happens After a Crash</h3>
+    <div class="space-y-3">
+      <div class="timeline-item pb-3">
+        <div class="font-medium text-sm">Bot crashes or is restarted</div>
+        <div class="text-xs" style="color:var(--text-muted)">In-memory album buffers are lost. Any items that were in "processing" status are stuck.</div>
+      </div>
+      <div class="timeline-item pb-3">
+        <div class="font-medium text-sm">Bot restarts and connects to MongoDB</div>
+        <div class="text-xs" style="color:var(--text-muted)">No manual intervention needed. MongoDB connection is automatic.</div>
+      </div>
+      <div class="timeline-item pb-3">
+        <div class="font-medium text-sm">Initial scan check</div>
+        <div class="text-xs" style="color:var(--text-muted)">Bot reads <code>last_processed_message_id</code> from state. If already scanned, skips bootstrap. If new messages arrived during downtime, they are detected and queued.</div>
+      </div>
+      <div class="timeline-item pb-3">
+        <div class="font-medium text-sm">Scheduler starts</div>
+        <div class="text-xs" style="color:var(--text-muted)">APScheduler job state is also stored in MongoDB. It resumes its interval immediately.</div>
+      </div>
+      <div class="timeline-item">
+        <div class="font-medium text-sm">Posting resumes</div>
+        <div class="text-xs" style="color:var(--text-muted)">Any items stuck in "processing" should be manually reset to "pending" if needed (see troubleshooting guide).</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- SECTION 9 — FLOODWAIT PROTECTION -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<section id="floodwait">
+  <div class="flex items-center gap-3 mb-8">
+    <div class="section-number">09</div>
+    <h2 class="text-2xl font-bold">FloodWait Protection</h2>
+  </div>
+  <div class="grid md:grid-cols-2 gap-6">
+    <div>
+      <div class="card p-5 mb-4" style="border-color:var(--warning)">
+        <div class="flex items-start gap-3">
+          <span class="text-2xl">🌊</span>
+          <div>
+            <div class="font-semibold mb-1">What is FloodWait?</div>
+            <p class="text-sm" style="color:var(--text-muted)">Telegram rate-limits all bots. If the bot sends too many API requests too quickly, Telegram responds with a <code>FloodWait</code> error telling the bot exactly how many seconds to wait before trying again.</p>
+          </div>
+        </div>
+      </div>
+      <div class="card p-5">
+        <div class="font-semibold mb-3">How the Bot Handles It</div>
+        <div class="space-y-2">
+          <div class="timeline-item pb-3">
+            <div class="font-medium text-sm">FloodWait error received</div>
+            <div class="text-xs" style="color:var(--text-muted)">Telegram says "wait X seconds"</div>
+          </div>
+          <div class="timeline-item pb-3">
+            <div class="font-medium text-sm">Item re-queued as "pending"</div>
+            <div class="text-xs" style="color:var(--text-muted)">The current item is NOT marked failed. It goes back to the front of the queue.</div>
+          </div>
+          <div class="timeline-item pb-3">
+            <div class="font-medium text-sm">Scheduler interval provides natural backoff</div>
+            <div class="text-xs" style="color:var(--text-muted)">The next tick won't fire until SEND_INTERVAL_SECONDS passes, naturally respecting the rate limit.</div>
+          </div>
+          <div class="timeline-item">
+            <div class="font-medium text-sm">Item is retried on next tick</div>
+            <div class="text-xs" style="color:var(--text-muted)">No messages are skipped or lost due to FloodWait.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="space-y-4">
+      <div class="card p-5">
+        <div class="font-semibold mb-2">Prevention Strategy</div>
+        <p class="text-sm mb-3" style="color:var(--text-muted)">Setting a generous <code>SEND_INTERVAL_SECONDS</code> greatly reduces FloodWait risk:</p>
+        <div class="space-y-2">
+          <div class="flex justify-between items-center py-1.5 border-b" style="border-color:var(--card-border)">
+            <span class="text-sm"><code>SEND_INTERVAL_SECONDS=60</code></span>
+            <span class="tag" style="background:rgba(239,68,68,.15);color:#fca5a5">High risk</span>
+          </div>
+          <div class="flex justify-between items-center py-1.5 border-b" style="border-color:var(--card-border)">
+            <span class="text-sm"><code>SEND_INTERVAL_SECONDS=600</code></span>
+            <span class="tag" style="background:rgba(245,158,11,.15);color:#fcd34d">Moderate</span>
+          </div>
+          <div class="flex justify-between items-center py-1.5">
+            <span class="text-sm"><code>SEND_INTERVAL_SECONDS=1800</code></span>
+            <span class="tag" style="background:rgba(34,197,94,.15);color:#4ade80">Recommended</span>
+          </div>
+        </div>
+      </div>
+      <div class="card p-5">
+        <div class="font-semibold mb-2">Zero Data Loss Guarantee</div>
+        <p class="text-sm" style="color:var(--text-muted)">FloodWait never causes a message to be skipped. The item stays in the queue and is retried on the next scheduler tick. The only effect is a slight delay in posting.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- SECTION 10 — MONGODB STORAGE FLOW -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<section id="mongodb">
+  <div class="flex items-center gap-3 mb-8">
+    <div class="section-number">10</div>
+    <h2 class="text-2xl font-bold">MongoDB Storage Flow</h2>
+  </div>
+  <div class="grid md:grid-cols-3 gap-4 mb-6">
+    <div class="card p-5" style="border-top:3px solid var(--accent)">
+      <div class="font-bold mb-1" style="color:var(--accent-light)">queue</div>
+      <div class="text-xs mb-3" style="color:var(--text-muted)">All content items to be sent</div>
+      <pre class="text-xs">{
+  message_id: 12345,
+  media_group_id: "abc",
+  message_ids: [1,2,3],
+  status: "pending",
+  retry_count: 0,
+  created_at: ISODate
+}</pre>
+    </div>
+    <div class="card p-5" style="border-top:3px solid var(--info)">
+      <div class="font-bold mb-1" style="color:var(--info)">state</div>
+      <div class="text-xs mb-3" style="color:var(--text-muted)">Single document — bot's brain</div>
+      <pre class="text-xs">{
+  _id: "main_state",
+  last_processed_message_id: 9999,
+  daily_sent_count: 12,
+  last_reset_date: "2024-01-15"
+}</pre>
+    </div>
+    <div class="card p-5" style="border-top:3px solid var(--success)">
+      <div class="font-bold mb-1" style="color:var(--success)">sent_logs</div>
+      <div class="text-xs mb-3" style="color:var(--text-muted)">Audit trail of every post</div>
+      <pre class="text-xs">{
+  source_message_id: 12345,
+  target_chat_id: -100x,
+  target_message_ids: [1],
+  sent_at: ISODate,
+  status: "success"
+}</pre>
+    </div>
+  </div>
+
+  <div class="card p-6">
+    <h3 class="font-semibold mb-4">Indexes Created Automatically at Startup</h3>
+    <div class="grid md:grid-cols-2 gap-4">
+      <div>
+        <div class="text-xs font-bold mb-2" style="color:var(--accent-light)">queue collection</div>
+        <div class="space-y-2">
+          <div class="flex items-center gap-2 p-2 rounded" style="background:rgba(255,255,255,.04)">
+            <span class="text-xs font-mono flex-1">{ status, message_id }</span>
+            <span class="tag text-xs" style="background:var(--accent-dim);color:var(--accent-light)">compound</span>
+          </div>
+          <div class="flex items-center gap-2 p-2 rounded" style="background:rgba(255,255,255,.04)">
+            <span class="text-xs font-mono flex-1">{ message_id }</span>
+            <span class="tag text-xs" style="background:rgba(34,197,94,.12);color:var(--success)">unique</span>
+          </div>
+          <div class="flex items-center gap-2 p-2 rounded" style="background:rgba(255,255,255,.04)">
+            <span class="text-xs font-mono flex-1">{ media_group_id }</span>
+            <span class="tag text-xs" style="background:rgba(245,158,11,.12);color:var(--warning)">sparse</span>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="text-xs font-bold mb-2" style="color:var(--success)">sent_logs collection</div>
+        <div class="space-y-2">
+          <div class="flex items-center gap-2 p-2 rounded" style="background:rgba(255,255,255,.04)">
+            <span class="text-xs font-mono flex-1">{ source_message_id }</span>
+            <span class="tag text-xs" style="background:rgba(56,189,248,.12);color:var(--info)">index</span>
+          </div>
+          <div class="flex items-center gap-2 p-2 rounded" style="background:rgba(255,255,255,.04)">
+            <span class="text-xs font-mono flex-1">{ sent_at }</span>
+            <span class="tag text-xs" style="background:rgba(56,189,248,.12);color:var(--info)">index</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- SECTION 11 — DEPLOYMENT ARCHITECTURE -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<section id="deployment">
+  <div class="flex items-center gap-3 mb-8">
+    <div class="section-number">11</div>
+    <h2 class="text-2xl font-bold">Deployment Architecture</h2>
+  </div>
+  <div class="card p-8">
+    <div class="grid md:grid-cols-3 gap-6">
+
+      <!-- Column 1: Developer -->
+      <div class="text-center">
+        <div class="card p-4 mb-4" style="border-color:var(--info)">
+          <div class="text-2xl mb-2">👩‍💻</div>
+          <div class="font-semibold text-sm">Developer</div>
+          <div class="text-xs mt-1" style="color:var(--text-muted)">Local Machine</div>
+        </div>
+        <div class="text-xs" style="color:var(--text-muted)">git push → GitHub</div>
+        <div class="text-2xl" style="color:var(--accent)">↓</div>
+        <div class="card p-4" style="border-color:var(--card-border)">
+          <div class="text-2xl mb-2">📦</div>
+          <div class="font-semibold text-sm">GitHub Repo</div>
+          <div class="text-xs mt-1" style="color:var(--text-muted)">Source code</div>
+        </div>
+      </div>
+
+      <!-- Column 2: Railway -->
+      <div class="text-center">
+        <div class="card p-4 mb-2" style="border-color:var(--accent)">
+          <div class="text-2xl mb-2">🚂</div>
+          <div class="font-semibold text-sm">Railway</div>
+          <div class="text-xs mt-1" style="color:var(--text-muted)">Cloud Platform</div>
+        </div>
+        <div class="text-xs mb-2" style="color:var(--text-muted)">Auto-build on push</div>
+        <div class="text-2xl mb-2" style="color:var(--accent)">↓</div>
+        <div class="card p-3 mb-2 text-xs" style="border-color:var(--card-border)">
+          🐳 Docker Build<br>
+          <span style="color:var(--text-muted)">Dockerfile → Image</span>
+        </div>
+        <div class="text-2xl mb-2" style="color:var(--accent)">↓</div>
+        <div class="card p-3 mb-2 text-xs" style="border-color:var(--success)">
+          ⚙️ Running Container<br>
+          <span style="color:var(--text-muted)">python main.py</span>
+        </div>
+        <div class="flex gap-2 mt-2">
+          <div class="card p-2 text-xs flex-1" style="border-color:var(--warning)">
+            💾 Volume<br>
+            <span style="color:var(--text-muted)">/app/sessions</span>
+          </div>
+          <div class="card p-2 text-xs flex-1" style="border-color:var(--info)">
+            🍃 MongoDB<br>
+            <span style="color:var(--text-muted)">Plugin</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Column 3: Telegram -->
+      <div class="text-center">
+        <div class="card p-4 mb-4" style="border-color:var(--success)">
+          <div class="text-2xl mb-2">✈️</div>
+          <div class="font-semibold text-sm">Telegram API</div>
+          <div class="text-xs mt-1" style="color:var(--text-muted)">MTProto Protocol</div>
+        </div>
+        <div class="flex flex-col gap-2">
+          <div class="card p-3 text-xs" style="border-color:var(--info)">
+            📁 Source Channel<br>
+            <span style="color:var(--text-muted)">Private storage</span>
+          </div>
+          <div class="text-2xl" style="color:var(--accent)">↕</div>
+          <div class="card p-3 text-xs" style="border-color:var(--success)">
+            📢 Target Channel<br>
+            <span style="color:var(--text-muted)">Public audience</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- SECTION 12 — ERROR RECOVERY FLOW -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<section id="error-recovery">
+  <div class="flex items-center gap-3 mb-8">
+    <div class="section-number">12</div>
+    <h2 class="text-2xl font-bold">Error Recovery Flow</h2>
+  </div>
+  <div class="grid md:grid-cols-3 gap-4">
+    <div class="card p-5" style="border-top:3px solid var(--warning)">
+      <div class="font-semibold mb-1" style="color:var(--warning)">⏳ FloodWait Error</div>
+      <div class="text-xs mb-3" style="color:var(--text-muted)">Telegram rate limit hit</div>
+      <div class="space-y-1 text-xs">
+        <div class="flex gap-2"><span style="color:var(--accent)">→</span> Item re-queued as "pending"</div>
+        <div class="flex gap-2"><span style="color:var(--accent)">→</span> Scheduler waits its natural interval</div>
+        <div class="flex gap-2"><span style="color:var(--accent)">→</span> Item retried on next tick</div>
+        <div class="flex gap-2"><span style="color:var(--success)">→</span> No data loss</div>
+      </div>
+    </div>
+    <div class="card p-5" style="border-top:3px solid var(--danger)">
+      <div class="font-semibold mb-1" style="color:var(--danger)">❌ Message Deleted</div>
+      <div class="text-xs mb-3" style="color:var(--text-muted)">Source message no longer exists</div>
+      <div class="space-y-1 text-xs">
+        <div class="flex gap-2"><span style="color:var(--accent)">→</span> <code>MessageIdInvalid</code> caught</div>
+        <div class="flex gap-2"><span style="color:var(--accent)">→</span> Item marked "failed"</div>
+        <div class="flex gap-2"><span style="color:var(--accent)">→</span> Bot continues to next item</div>
+        <div class="flex gap-2"><span style="color:var(--success)">→</span> Queue keeps moving</div>
+      </div>
+    </div>
+    <div class="card p-5" style="border-top:3px solid var(--info)">
+      <div class="font-semibold mb-1" style="color:var(--info)">🔄 Bot Crash / Restart</div>
+      <div class="text-xs mb-3" style="color:var(--text-muted)">Container stopped unexpectedly</div>
+      <div class="space-y-1 text-xs">
+        <div class="flex gap-2"><span style="color:var(--accent)">→</span> Railway restarts container</div>
+        <div class="flex gap-2"><span style="color:var(--accent)">→</span> MongoDB state re-read</div>
+        <div class="flex gap-2"><span style="color:var(--accent)">→</span> Session file loaded from volume</div>
+        <div class="flex gap-2"><span style="color:var(--success)">→</span> Posting resumes automatically</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- SECTION 13 — POSTING LIFECYCLE -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<section id="lifecycle">
+  <div class="flex items-center gap-3 mb-8">
+    <div class="section-number">13</div>
+    <h2 class="text-2xl font-bold">Step-by-Step Posting Lifecycle</h2>
+  </div>
+  <div class="card p-6">
+    <div class="space-y-0">
+      <div class="timeline-item pb-5">
+        <div class="flex items-start gap-3">
+          <span class="tag mt-0.5" style="background:var(--accent-dim);color:var(--accent-light);flex-shrink:0">01</span>
+          <div>
+            <div class="font-semibold">Admin uploads content to source channel</div>
+            <p class="text-sm mt-1" style="color:var(--text-muted)">Photo, video, album, or text post is sent to the private source channel by an admin. The channel is accessible only to the bot.</p>
+          </div>
+        </div>
+      </div>
+      <div class="timeline-item pb-5">
+        <div class="flex items-start gap-3">
+          <span class="tag mt-0.5" style="background:var(--accent-dim);color:var(--accent-light);flex-shrink:0">02</span>
+          <div>
+            <div class="font-semibold">Pyrogram receives the message event</div>
+            <p class="text-sm mt-1" style="color:var(--text-muted)">The message handler fires instantly. For albums, each photo arrives as a separate event. For single messages, one event fires.</p>
+          </div>
+        </div>
+      </div>
+      <div class="timeline-item pb-5">
+        <div class="flex items-start gap-3">
+          <span class="tag mt-0.5" style="background:var(--accent-dim);color:var(--accent-light);flex-shrink:0">03</span>
+          <div>
+            <div class="font-semibold">QueueManager buffers or inserts directly</div>
+            <p class="text-sm mt-1" style="color:var(--text-muted)">Single messages → immediate DB insert. Album messages → 3-second buffer until all parts arrive, then single DB insert for the group.</p>
+          </div>
+        </div>
+      </div>
+      <div class="timeline-item pb-5">
+        <div class="flex items-start gap-3">
+          <span class="tag mt-0.5" style="background:var(--accent-dim);color:var(--accent-light);flex-shrink:0">04</span>
+          <div>
+            <div class="font-semibold">APScheduler tick fires after interval</div>
+            <p class="text-sm mt-1" style="color:var(--text-muted)">Every <code>SEND_INTERVAL_SECONDS</code>, the scheduler fires the <code>posting_job</code>. Only one instance can run at a time.</p>
+          </div>
+        </div>
+      </div>
+      <div class="timeline-item pb-5">
+        <div class="flex items-start gap-3">
+          <span class="tag mt-0.5" style="background:rgba(245,158,11,.2);color:var(--warning);flex-shrink:0">05</span>
+          <div>
+            <div class="font-semibold">Daily limit check</div>
+            <p class="text-sm mt-1" style="color:var(--text-muted)">If today's date changed since last run, reset the counter. If <code>daily_sent_count ≥ DAILY_LIMIT</code>, exit — no post today.</p>
+          </div>
+        </div>
+      </div>
+      <div class="timeline-item pb-5">
+        <div class="flex items-start gap-3">
+          <span class="tag mt-0.5" style="background:var(--accent-dim);color:var(--accent-light);flex-shrink:0">06</span>
+          <div>
+            <div class="font-semibold">Oldest pending item dequeued atomically</div>
+            <p class="text-sm mt-1" style="color:var(--text-muted)">MongoDB <code>find_one_and_update</code> finds the oldest "pending" item and marks it "processing" in one atomic operation.</p>
+          </div>
+        </div>
+      </div>
+      <div class="timeline-item pb-5">
+        <div class="flex items-start gap-3">
+          <span class="tag mt-0.5" style="background:var(--accent-dim);color:var(--accent-light);flex-shrink:0">07</span>
+          <div>
+            <div class="font-semibold">Caption built and applied</div>
+            <p class="text-sm mt-1" style="color:var(--text-muted)">Original caption (if any) is preserved. <code>FIXED_CAPTION</code> is appended below a separator. HTML formatting is maintained.</p>
+          </div>
+        </div>
+      </div>
+      <div class="timeline-item pb-5">
+        <div class="flex items-start gap-3">
+          <span class="tag mt-0.5" style="background:var(--accent-dim);color:var(--accent-light);flex-shrink:0">08</span>
+          <div>
+            <div class="font-semibold">Telegram API call made</div>
+            <p class="text-sm mt-1" style="color:var(--text-muted)"><code>copy_message</code> for single items, <code>copy_media_group</code> for albums. No "Forwarded from" label. Content appears as original.</p>
+          </div>
+        </div>
+      </div>
+      <div class="timeline-item pb-5">
+        <div class="flex items-start gap-3">
+          <span class="tag mt-0.5" style="background:rgba(34,197,94,.2);color:var(--success);flex-shrink:0">09</span>
+          <div>
+            <div class="font-semibold">Status updated in MongoDB</div>
+            <p class="text-sm mt-1" style="color:var(--text-muted)">Item marked "sent". A record written to <code>sent_logs</code>. <code>daily_sent_count</code> incremented atomically.</p>
+          </div>
+        </div>
+      </div>
+      <div class="timeline-item">
+        <div class="flex items-start gap-3">
+          <span class="tag mt-0.5" style="background:rgba(34,197,94,.2);color:var(--success);flex-shrink:0">10</span>
+          <div>
+            <div class="font-semibold">Subscribers see the post</div>
+            <p class="text-sm mt-1" style="color:var(--text-muted)">The message appears in the target channel with your custom caption. Full quality — no compression, no forwarding label.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- SECTION 14 — ADMIN CONFIGURATION FLOW -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<section id="admin-config">
+  <div class="flex items-center gap-3 mb-8">
+    <div class="section-number">14</div>
+    <h2 class="text-2xl font-bold">Admin Configuration Flow</h2>
+  </div>
+  <div class="grid md:grid-cols-2 gap-6">
+    <div class="card p-6">
+      <h3 class="font-semibold mb-4">Required One-Time Setup</h3>
+      <div class="space-y-3">
+        <div class="flex items-start gap-3 p-3 rounded" style="background:rgba(255,255,255,.04)">
+          <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0" style="background:var(--accent-dim);color:var(--accent-light)">1</div>
+          <div>
+            <div class="text-sm font-medium">Get Telegram API credentials</div>
+            <div class="text-xs mt-0.5" style="color:var(--text-muted)">my.telegram.org → API Development Tools → App</div>
+          </div>
+        </div>
+        <div class="flex items-start gap-3 p-3 rounded" style="background:rgba(255,255,255,.04)">
+          <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0" style="background:var(--accent-dim);color:var(--accent-light)">2</div>
+          <div>
+            <div class="text-sm font-medium">Create bot via @BotFather</div>
+            <div class="text-xs mt-0.5" style="color:var(--text-muted)">/newbot → get BOT_TOKEN</div>
+          </div>
+        </div>
+        <div class="flex items-start gap-3 p-3 rounded" style="background:rgba(255,255,255,.04)">
+          <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0" style="background:var(--accent-dim);color:var(--accent-light)">3</div>
+          <div>
+            <div class="text-sm font-medium">Add bot as admin to both channels</div>
+            <div class="text-xs mt-0.5" style="color:var(--text-muted)">Source: read access. Target: Post Messages permission.</div>
+          </div>
+        </div>
+        <div class="flex items-start gap-3 p-3 rounded" style="background:rgba(255,255,255,.04)">
+          <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0" style="background:var(--accent-dim);color:var(--accent-light)">4</div>
+          <div>
+            <div class="text-sm font-medium">Find channel integer IDs</div>
+            <div class="text-xs mt-0.5" style="color:var(--text-muted)">Use @userinfobot in each channel to get -100xxxxxxxxxx</div>
+          </div>
+        </div>
+        <div class="flex items-start gap-3 p-3 rounded" style="background:rgba(255,255,255,.04)">
+          <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0" style="background:var(--accent-dim);color:var(--accent-light)">5</div>
+          <div>
+            <div class="text-sm font-medium">Set all environment variables</div>
+            <div class="text-xs mt-0.5" style="color:var(--text-muted)">In Railway dashboard or local .env file</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card p-6">
+      <h3 class="font-semibold mb-4">Ongoing Operation</h3>
+      <div class="space-y-3">
+        <div class="flex items-start gap-3 p-3 rounded" style="background:rgba(255,255,255,.04)">
+          <span class="text-xl flex-shrink-0">📤</span>
+          <div>
+            <div class="text-sm font-medium">Upload content to source channel</div>
+            <div class="text-xs mt-0.5" style="color:var(--text-muted)">Bot automatically detects and queues it. Nothing else needed.</div>
+          </div>
+        </div>
+        <div class="flex items-start gap-3 p-3 rounded" style="background:rgba(255,255,255,.04)">
+          <span class="text-xl flex-shrink-0">📊</span>
+          <div>
+            <div class="text-sm font-medium">Monitor Railway logs</div>
+            <div class="text-xs mt-0.5" style="color:var(--text-muted)">Every post, queue event, and error is logged. Check daily.</div>
+          </div>
+        </div>
+        <div class="flex items-start gap-3 p-3 rounded" style="background:rgba(255,255,255,.04)">
+          <span class="text-xl flex-shrink-0">⚙️</span>
+          <div>
+            <div class="text-sm font-medium">Adjust DAILY_LIMIT and SEND_INTERVAL</div>
+            <div class="text-xs mt-0.5" style="color:var(--text-muted)">Change in Railway Variables tab. Redeploy to apply.</div>
+          </div>
+        </div>
+        <div class="flex items-start gap-3 p-3 rounded" style="background:rgba(255,255,255,.04)">
+          <span class="text-xl flex-shrink-0">🔁</span>
+          <div>
+            <div class="text-sm font-medium">Retry failed items if needed</div>
+            <div class="text-xs mt-0.5" style="color:var(--text-muted)">MongoDB shell: <code>db.queue.updateMany({status:"failed"}, {$set:{status:"pending"}})</code></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- SECTION 15 — ENVIRONMENT VARIABLES -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<section id="env-vars">
+  <div class="flex items-center gap-3 mb-8">
+    <div class="section-number">15</div>
+    <h2 class="text-2xl font-bold">Environment Variables Explained</h2>
+  </div>
+  <div class="card overflow-hidden">
+    <div class="grid grid-cols-3 text-xs font-bold px-4 py-3" style="background:rgba(255,255,255,.04);color:var(--text-muted)">
+      <div>VARIABLE</div><div>EXAMPLE</div><div>WHAT IT DOES</div>
+    </div>
+    <div class="divide-y" style="--tw-divide-opacity:1;border-color:var(--card-border)">
+      <div class="env-row grid grid-cols-3 gap-2 px-4 py-3 text-sm items-start">
+        <code class="text-xs" style="color:var(--accent-light)">API_ID</code>
+        <span class="text-xs" style="color:var(--text-muted)">1234567</span>
+        <span class="text-xs" style="color:var(--text-muted)">Your personal Telegram API ID from my.telegram.org</span>
+      </div>
+      <div class="env-row grid grid-cols-3 gap-2 px-4 py-3 text-sm items-start">
+        <code class="text-xs" style="color:var(--accent-light)">API_HASH</code>
+        <span class="text-xs" style="color:var(--text-muted)">abc123def456...</span>
+        <span class="text-xs" style="color:var(--text-muted)">32-character hash from the same page as API_ID</span>
+      </div>
+      <div class="env-row grid grid-cols-3 gap-2 px-4 py-3 text-sm items-start">
+        <code class="text-xs" style="color:var(--accent-light)">BOT_TOKEN</code>
+        <span class="text-xs" style="color:var(--text-muted)">123456:ABCdef...</span>
+        <span class="text-xs" style="color:var(--text-muted)">Bot token from @BotFather. Never share this.</span>
+      </div>
+      <div class="env-row grid grid-cols-3 gap-2 px-4 py-3 text-sm items-start">
+        <code class="text-xs" style="color:var(--accent-light)">MONGO_URI</code>
+        <span class="text-xs" style="color:var(--text-muted)">mongodb://...</span>
+        <span class="text-xs" style="color:var(--text-muted)">Full MongoDB connection string. On Railway, copy from the MongoDB service Variables tab.</span>
+      </div>
+      <div class="env-row grid grid-cols-3 gap-2 px-4 py-3 text-sm items-start">
+        <code class="text-xs" style="color:var(--accent-light)">SOURCE_CHANNEL_ID</code>
+        <span class="text-xs" style="color:var(--text-muted)">-1001234567890</span>
+        <span class="text-xs" style="color:var(--text-muted)">Integer ID of the private source channel. Must start with -100.</span>
+      </div>
+      <div class="env-row grid grid-cols-3 gap-2 px-4 py-3 text-sm items-start">
+        <code class="text-xs" style="color:var(--accent-light)">TARGET_CHAT_ID</code>
+        <span class="text-xs" style="color:var(--text-muted)">-1009876543210</span>
+        <span class="text-xs" style="color:var(--text-muted)">Integer ID of the target channel or group where posts will be published.</span>
+      </div>
+      <div class="env-row grid grid-cols-3 gap-2 px-4 py-3 text-sm items-start">
+        <code class="text-xs" style="color:var(--accent-light)">FIXED_CAPTION</code>
+        <span class="text-xs" style="color:var(--text-muted)">Join @channel</span>
+        <span class="text-xs" style="color:var(--text-muted)">Text appended below every post's caption. Supports HTML formatting and \n for line breaks.</span>
+      </div>
+      <div class="env-row grid grid-cols-3 gap-2 px-4 py-3 text-sm items-start">
+        <code class="text-xs" style="color:var(--accent-light)">DAILY_LIMIT</code>
+        <span class="text-xs" style="color:var(--text-muted)">20</span>
+        <span class="text-xs" style="color:var(--text-muted)">Maximum number of posts per day. Resets at midnight in your TIMEZONE.</span>
+      </div>
+      <div class="env-row grid grid-cols-3 gap-2 px-4 py-3 text-sm items-start">
+        <code class="text-xs" style="color:var(--accent-light)">SEND_INTERVAL_SECONDS</code>
+        <span class="text-xs" style="color:var(--text-muted)">1800</span>
+        <span class="text-xs" style="color:var(--text-muted)">Seconds between each post. 1800 = 30 minutes. Lower values risk FloodWait.</span>
+      </div>
+      <div class="env-row grid grid-cols-3 gap-2 px-4 py-3 text-sm items-start">
+        <code class="text-xs" style="color:var(--accent-light)">START_MESSAGE_ID</code>
+        <span class="text-xs" style="color:var(--text-muted)">1</span>
+        <span class="text-xs" style="color:var(--text-muted)">The message ID in the source channel to start scanning from on first run. Set to a recent ID to skip old content.</span>
+      </div>
+      <div class="env-row grid grid-cols-3 gap-2 px-4 py-3 text-sm items-start">
+        <code class="text-xs" style="color:var(--accent-light)">TIMEZONE</code>
+        <span class="text-xs" style="color:var(--text-muted)">UTC</span>
+        <span class="text-xs" style="color:var(--text-muted)">Timezone for daily counter reset. Use standard TZ names like America/New_York or Europe/London.</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- SECTION 16 — REAL EXAMPLE SCENARIO -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<section id="example">
+  <div class="flex items-center gap-3 mb-8">
+    <div class="section-number">16</div>
+    <h2 class="text-2xl font-bold">Real Example Scenario</h2>
+  </div>
+  <div class="card p-6 mb-6" style="border-color:var(--accent)">
+    <h3 class="font-semibold mb-2">Setup</h3>
+    <div class="grid md:grid-cols-3 gap-4 text-sm">
+      <div><span style="color:var(--text-muted)">Source:</span> Private channel with 500 stored videos</div>
+      <div><span style="color:var(--text-muted)">Target:</span> Public channel with 50,000 subscribers</div>
+      <div><span style="color:var(--text-muted)">Config:</span> 20 posts/day, every 30 minutes</div>
+    </div>
+  </div>
+  <div class="space-y-3">
+    <div class="card p-4 border-l-4" style="border-left-color:var(--info)">
+      <div class="flex items-start gap-3">
+        <span class="text-sm font-mono" style="color:var(--text-muted);white-space:nowrap">Day 1 — 09:00</span>
+        <div class="text-sm">Bot starts. Initial scan finds 500 videos in source channel. All 500 added to MongoDB queue as "pending". Scheduler starts.</div>
+      </div>
+    </div>
+    <div class="card p-4 border-l-4" style="border-left-color:var(--accent)">
+      <div class="flex items-start gap-3">
+        <span class="text-sm font-mono" style="color:var(--text-muted);white-space:nowrap">Day 1 — 09:00</span>
+        <div class="text-sm">First tick fires. Video #1 copied to public channel with custom caption "🔥 Premium Content\nJoin @channel". <code>daily_sent_count = 1</code></div>
+      </div>
+    </div>
+    <div class="card p-4 border-l-4" style="border-left-color:var(--accent)">
+      <div class="flex items-start gap-3">
+        <span class="text-sm font-mono" style="color:var(--text-muted);white-space:nowrap">Day 1 — 09:30</span>
+        <div class="text-sm">Admin uploads a 5-photo album to source channel. Bot buffers all 5 photos, waits 3 seconds, inserts as one queue item. Album queued as item #501.</div>
+      </div>
+    </div>
+    <div class="card p-4 border-l-4" style="border-left-color:var(--warning)">
+      <div class="flex items-start gap-3">
+        <span class="text-sm font-mono" style="color:var(--text-muted);white-space:nowrap">Day 1 — 19:00</span>
+        <div class="text-sm">20th post sent. <code>daily_sent_count = 20 = DAILY_LIMIT</code>. Scheduler ticks but exits early. No more posts today. 480 items still pending.</div>
+      </div>
+    </div>
+    <div class="card p-4 border-l-4" style="border-left-color:var(--success)">
+      <div class="flex items-start gap-3">
+        <span class="text-sm font-mono" style="color:var(--text-muted);white-space:nowrap">Day 2 — 00:00</span>
+        <div class="text-sm">First tick after midnight. <code>last_reset_date</code> ≠ today. Counter resets to 0. Posting resumes. Bot continues from item #21 in queue.</div>
+      </div>
+    </div>
+    <div class="card p-4 border-l-4" style="border-left-color:var(--danger)">
+      <div class="flex items-start gap-3">
+        <span class="text-sm font-mono" style="color:var(--text-muted);white-space:nowrap">Day 3 — 14:00</span>
+        <div class="text-sm">Container restarts (Railway update). Bot reconnects in ~30 seconds. Reads state from MongoDB. Continues from item #61 — zero messages lost.</div>
+      </div>
+    </div>
+    <div class="card p-4 border-l-4" style="border-left-color:var(--success)">
+      <div class="flex items-start gap-3">
+        <span class="text-sm font-mono" style="color:var(--text-muted);white-space:nowrap">Day 25</span>
+        <div class="text-sm">All 500 original videos posted + the 5-photo album sent as a single album post. Queue empty. Bot idles, ready for new content.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- SECTION 17 — FAQ -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<section id="faq">
+  <div class="flex items-center gap-3 mb-8">
+    <div class="section-number">17</div>
+    <h2 class="text-2xl font-bold">FAQ</h2>
+  </div>
+  <div class="card divide-y" style="border-color:var(--card-border)">
+
+    <div class="faq-item p-5">
+      <div class="font-semibold mb-2">Does the bot add "Forwarded from" to posts?</div>
+      <p class="text-sm" style="color:var(--text-muted)">No. The bot uses Telegram's <code>copy_message</code> API which copies the content without any forwarding label. Posts appear as if the target channel posted them directly.</p>
+    </div>
+
+    <div class="faq-item p-5">
+      <div class="font-semibold mb-2">What happens if the bot goes offline for several hours?</div>
+      <p class="text-sm" style="color:var(--text-muted)">Nothing is lost. The queue in MongoDB stores all pending content. When the bot comes back online, it resumes posting exactly where it left off. Messages sent to the source channel during the downtime are detected on restart via the initial scan catch-up logic.</p>
+    </div>
+
+    <div class="faq-item p-5">
+      <div class="font-semibold mb-2">Can I post to multiple target channels?</div>
+      <p class="text-sm" style="color:var(--text-muted)">The current setup supports one target channel (<code>TARGET_CHAT_ID</code>). To post to multiple channels, you would need to run multiple bot instances with different configurations.</p>
+    </div>
+
+    <div class="faq-item p-5">
+      <div class="font-semibold mb-2">Will it resend old content every time it restarts?</div>
+      <p class="text-sm" style="color:var(--text-muted)">No. The <code>last_processed_message_id</code> in MongoDB tracks which messages have already been scanned and queued. On restart, the initial scan is skipped if this value is greater than <code>START_MESSAGE_ID</code>. Already-sent items have status "sent" and are never re-sent.</p>
+    </div>
+
+    <div class="faq-item p-5">
+      <div class="font-semibold mb-2">What if Telegram rate-limits the bot?</div>
+      <p class="text-sm" style="color:var(--text-muted)">The bot handles FloodWait automatically. The affected item is re-queued and retried on the next scheduler tick. No manual action is needed. To reduce the risk of FloodWait, increase <code>SEND_INTERVAL_SECONDS</code>.</p>
+    </div>
+
+    <div class="faq-item p-5">
+      <div class="font-semibold mb-2">Can I change DAILY_LIMIT or SEND_INTERVAL without restarting?</div>
+      <p class="text-sm" style="color:var(--text-muted)">These are loaded from environment variables at startup. To change them, update the variable in Railway's dashboard and trigger a redeploy. The new values take effect immediately after restart.</p>
+    </div>
+
+    <div class="faq-item p-5">
+      <div class="font-semibold mb-2">What file types are supported?</div>
+      <p class="text-sm" style="color:var(--text-muted)">Everything Telegram supports: photos, videos, documents, audio, voice messages, and text posts. Albums (multiple photos/videos sent together) are handled as single grouped sends.</p>
+    </div>
+
+    <div class="faq-item p-5">
+      <div class="font-semibold mb-2">Is the source channel content modified before posting?</div>
+      <p class="text-sm" style="color:var(--text-muted)">Only the caption is modified. Original media files are never re-uploaded or re-compressed — Telegram's copy API copies the file reference at the API level, which means instant delivery at full original quality.</p>
+    </div>
+
+    <div class="faq-item p-5">
+      <div class="font-semibold mb-2">How do I know if the bot is working?</div>
+      <p class="text-sm" style="color:var(--text-muted)">Check Railway logs for entries like <code>INFO: Successfully sent item from source message X</code>. You can also check MongoDB: <code>db.queue.countDocuments({status:"sent"})</code> should increase over time.</p>
+    </div>
+
+    <div class="faq-item p-5">
+      <div class="font-semibold mb-2">What's the minimum Railway plan needed?</div>
+      <p class="text-sm" style="color:var(--text-muted)">The free tier has limited usage hours per month — not enough for 24/7 operation. For a continuously running bot, you need the <strong style="color:var(--text)">Hobby Plan ($5/month)</strong>. This gives unlimited uptime and is sufficient for this bot.</p>
+    </div>
+
+  </div>
+</section>
+
+</main>
+
+<!-- FOOTER -->
+<footer class="border-t mt-8 py-8 text-center" style="border-color:var(--card-border)">
+  <div class="text-sm" style="color:var(--text-muted)">
+    Telegram Automation Bot — System Documentation
+    <span class="mx-2">·</span>
+    Built with Python 3.11 · Pyrogram · MongoDB · APScheduler · Railway
+  </div>
+</footer>
+
+</body>
+</html>

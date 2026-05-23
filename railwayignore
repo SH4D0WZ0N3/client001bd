@@ -1,0 +1,43 @@
+# Development artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Local environment
+.env
+.env.local
+*.session
+*.session-journal
+
+# Local Docker files (Railway uses railway.json + Dockerfile only)
+docker-compose.yml
+docker-compose.override.yml
+
+# IDE and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Logs (Railway streams stdout; local log files not needed in image)
+logs/
+*.log
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Git
+.git/
+.gitignore
+
+# Documentation source (docs are not needed in the running container)
+docs/
