@@ -20,7 +20,15 @@ async def main() -> None:
     await app.start()
     logger.success("Bot client started.")
 
-    await initial_channel_scan(app)
+    # Scan failure must never kill the bot process.
+    # Handlers and scheduler are independent of scan completion.
+    try:
+        await initial_channel_scan(app)
+    except Exception as exc:
+        logger.error(
+            f"Initial channel scan failed (bot continues running): {exc}",
+            exc_info=True,
+        )
 
     scheduler = setup_scheduler(sender)
 

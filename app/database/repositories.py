@@ -11,7 +11,14 @@ from loguru import logger
 
 class BaseRepository:
     def __init__(self, collection_name: str):
-        self.collection: AsyncIOMotorCollection = get_database()[collection_name]
+        self._collection_name = collection_name
+        self._collection: Optional[AsyncIOMotorCollection] = None
+
+    @property
+    def collection(self) -> AsyncIOMotorCollection:
+        if self._collection is None:
+            self._collection = get_database()[self._collection_name]
+        return self._collection
 
 
 class QueueRepository(BaseRepository):
@@ -19,10 +26,6 @@ class QueueRepository(BaseRepository):
         super().__init__("queue")
 
     async def add_to_queue(self, item: QueueItem) -> Optional[QueueItem]:
-        """
-        Inserts a new queue item. Relies on the unique index on message_id for
-        atomic duplicate prevention — no separate find_one race condition.
-        """
         try:
             result = await self.collection.insert_one(
                 item.model_dump(by_alias=True, exclude={"id"})

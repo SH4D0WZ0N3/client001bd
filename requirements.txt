@@ -8,3 +8,4 @@ loguru==0.7.2
 pydantic==2.5.3
 pydantic-settings==2.1.0
 pytz==2024.1
+Pillow==10.3.0
