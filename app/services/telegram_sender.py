@@ -6,6 +6,11 @@ Fixes applied:
         with HTML formatting are rendered correctly.
   HR-4: Watermarked media group uses InputMediaDocument for documents/audio
         instead of incorrectly wrapping them in InputMediaVideo.
+  FIX-PEER: PeerIdInvalid is now handled as a RECOVERABLE error, not a
+        permanent failure.  On first occurrence the sender attempts to
+        resolve the target peer via get_chat() and retries once.  If the
+        retry also fails the exception is re-raised so the posting_worker
+        can re-queue the item as "pending" instead of marking it "failed".
 """
 
 import asyncio
@@ -215,8 +220,8 @@ class TelegramSender:
 
     async def send_item(self, item: QueueItem) -> bool:
         """
-        Returns True on success, False on permanent failure.
-        Raises FloodWait to let the worker handle backoff.
+        Returns True on success, False on permanent per-message failure.
+        Raises FloodWait or PeerIdInvalid to let the worker handle backoff/re-queue.
         """
         try:
             if item.media_group_id and item.message_ids:
@@ -247,9 +252,53 @@ class TelegramSender:
             return False
 
         except FloodWait:
+            # Let posting_worker handle the backoff
             raise
 
-        except (MessageIdInvalid, ChannelInvalid, PeerIdInvalid) as exc:
+        except PeerIdInvalid as exc:
+            # NOT a permanent failure — Pyrogram hasn't cached the target peer yet.
+            # Attempt to resolve the peer and retry exactly once.
+            logger.warning(
+                f"PeerIdInvalid for message {item.message_id}: {exc}. "
+                "Resolving target peer and retrying…"
+            )
+            try:
+                await self.client.get_chat(settings.TARGET_CHAT_ID)
+                logger.info("Target peer resolved. Retrying send…")
+
+                if item.media_group_id and item.message_ids:
+                    sent = await self._send_media_group(item)
+                else:
+                    sent = await self._send_single(item)
+
+                if sent:
+                    await sent_log_repo.create_log(
+                        SentLog(
+                            source_message_id=item.message_id,
+                            target_chat_id=settings.TARGET_CHAT_ID,
+                            target_message_ids=[m.id for m in sent],
+                            status="success",
+                        )
+                    )
+                    logger.success(
+                        f"Sent source message {item.message_id} after peer resolution."
+                    )
+                    return True
+
+                return False
+
+            except Exception as retry_exc:
+                logger.error(
+                    f"Retry after peer resolution also failed for "
+                    f"message {item.message_id}: {retry_exc}"
+                )
+                # Re-raise the original PeerIdInvalid so posting_worker
+                # can re-queue the item as "pending" instead of "failed".
+                raise exc
+
+        except (MessageIdInvalid, ChannelInvalid) as exc:
+            # Genuinely permanent per-message failures — content is gone or
+            # the source channel is invalid.  Mark as failed and move on.
             logger.warning(
                 f"Permanent Telegram error for message {item.message_id}: {exc}. "
                 "Marking as failed."
@@ -257,6 +306,19 @@ class TelegramSender:
             return False
 
         except Exception as exc:
+            err_str = str(exc).lower()
+
+            # Safety net: some Pyrogram builds surface PeerIdInvalid as a
+            # generic Exception depending on how the MTProto layer is compiled.
+            # Treat any "peer id invalid" string as recoverable — re-raise so
+            # the posting_worker re-queues instead of marking permanent failed.
+            if "peer id invalid" in err_str:
+                logger.warning(
+                    f"PeerIdInvalid (caught via Exception) for message "
+                    f"{item.message_id}: {exc}. Re-raising for re-queue."
+                )
+                raise
+
             logger.error(
                 f"Unexpected error sending message {item.message_id}: {exc}",
                 exc_info=True,
@@ -291,6 +353,10 @@ class TelegramSender:
                         parse_mode=enums.ParseMode.HTML,
                     )
                     return [sent]
+                except (PeerIdInvalid, ChannelInvalid):
+                    # Propagate peer errors — do NOT swallow them here.
+                    # The outer send_item handler will resolve the peer and retry.
+                    raise
                 except Exception as exc:
                     logger.warning(
                         f"send_photo with watermark failed for {item.message_id}: "
@@ -387,7 +453,6 @@ class TelegramSender:
                         first_caption_assigned = True
 
                     elif msg.document:
-                        # FIX HR-4: Use InputMediaDocument, not InputMediaVideo
                         temp_paths.append(None)
                         media_inputs.append(
                             InputMediaDocument(
@@ -399,7 +464,6 @@ class TelegramSender:
                         first_caption_assigned = True
 
                     elif msg.audio:
-                        # FIX HR-4: Use InputMediaAudio, not InputMediaVideo
                         temp_paths.append(None)
                         media_inputs.append(
                             InputMediaAudio(
@@ -411,8 +475,6 @@ class TelegramSender:
                         first_caption_assigned = True
 
                     else:
-                        # video_note, sticker, or other unsupported media type
-                        # in a media group — skip it rather than send a bad type
                         temp_paths.append(None)
                         logger.warning(
                             f"Message {msg.id} in group {item.media_group_id} "
@@ -426,6 +488,9 @@ class TelegramSender:
                     )
                     return sent
 
+            except (PeerIdInvalid, ChannelInvalid):
+                # Propagate peer errors — do NOT swallow them in the fallback.
+                raise
             except Exception as exc:
                 logger.warning(
                     f"Watermarked media group send failed for "
@@ -436,7 +501,6 @@ class TelegramSender:
                 _cleanup(*[p for p in temp_paths if p])
 
         # --- Fallback: copy_media_group (no watermark) ---
-        # FIX HR-3: Add parse_mode so HTML in captions renders correctly.
         captions: List[str] = [caption] + [""] * (len(valid) - 1)
         sent = await self.client.copy_media_group(
             chat_id=settings.TARGET_CHAT_ID,

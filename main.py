@@ -9,6 +9,7 @@ from app.services.telegram_sender import TelegramSender
 from app.services.bootstrap import initial_channel_scan
 from app.services.queue_manager import queue_manager
 from app.scheduler.scheduler import setup_scheduler
+from app.utils.config import settings
 
 
 def _async_exception_handler(loop, context):
@@ -17,6 +18,32 @@ def _async_exception_handler(loop, context):
         f"Unhandled async exception: {msg}",
         exc_info=context.get("exception"),
     )
+
+
+async def _resolve_peers(app) -> None:
+    """
+    Pre-warm Pyrogram's internal peer cache for both channels.
+
+    Without this, Pyrogram throws PeerIdInvalid on the very first
+    copy_message / send_photo call because it has never "seen" the
+    target channel in the current session — even if the bot is an admin
+    there.  get_chat() forces an API round-trip that populates the cache.
+    """
+    for chat_id, label in [
+        (settings.SOURCE_CHANNEL_ID, "source"),
+        (settings.TARGET_CHAT_ID, "target"),
+    ]:
+        try:
+            chat = await app.get_chat(chat_id)
+            logger.info(
+                f"{label.capitalize()} peer resolved: "
+                f"'{getattr(chat, 'title', chat_id)}' (id={chat.id})"
+            )
+        except Exception as exc:
+            logger.error(
+                f"Failed to resolve {label} peer (id={chat_id}): {exc}. "
+                f"Verify the bot is an admin in that channel and the ID is correct."
+            )
 
 
 async def main() -> None:
@@ -29,10 +56,13 @@ async def main() -> None:
     await connect_to_mongo()
     await ensure_indexes()
 
-    # FIX CF-1: Recover any items left in "processing" from a prior crash.
-    # This MUST run before the scheduler starts so the worker sees them as
-    # "pending" and retries them normally.
+    # Recover items stuck in "processing" from a previous crash
     await queue_repo.recover_stale_processing_items()
+
+    # Recover items that failed with "send_item() returned False" — these are
+    # typically PeerIdInvalid failures caused by the peer-not-cached issue.
+    # Resetting them allows a clean retry after this deployment.
+    await queue_repo.recover_send_failed_items()
 
     # ── Bot client ────────────────────────────────────────────────────────────
     app = create_bot_instance()
@@ -40,6 +70,10 @@ async def main() -> None:
 
     await app.start()
     logger.success("Bot client started.")
+
+    # CRITICAL: resolve peer cache BEFORE the scheduler fires its first tick.
+    # This is the primary fix for PeerIdInvalid on first send.
+    await _resolve_peers(app)
 
     # ── Bootstrap (historical scan) ───────────────────────────────────────────
     try:
@@ -75,8 +109,6 @@ async def main() -> None:
         if scheduler.running:
             scheduler.shutdown(wait=False)
 
-        # FIX HR-2: Drain any in-flight album flush tasks so that albums
-        # buffered within the last 3 seconds are not lost.
         logger.info("Draining pending album flush tasks…")
         await queue_manager.shutdown()
 

@@ -64,6 +64,45 @@ class QueueRepository(BaseRepository):
             )
         return count
 
+    async def recover_send_failed_items(self, max_retry_count: int = 10) -> int:
+        """
+        Reset items that were marked failed because send_item() returned False.
+
+        This error_message signature ("send_item() returned False") is set by
+        the posting_worker when the sender returns False without raising.  The
+        primary cause is PeerIdInvalid — the Pyrogram session hadn't cached the
+        target peer yet.  After the peer is resolved at startup these items will
+        send normally on retry.
+
+        Genuine permanent failures (deleted messages, wrong channel, etc.) will
+        simply fail again and accumulate retry_count until they exceed the
+        max_retry_count threshold and are left failed.
+
+        max_retry_count=10 is deliberately generous; adjust down if you want
+        faster give-up on truly broken items.
+        """
+        result = await self.collection.update_many(
+            {
+                "status": "failed",
+                "error_message": "send_item() returned False",
+                "retry_count": {"$lte": max_retry_count},
+            },
+            {
+                "$set": {
+                    "status": "pending",
+                    "error_message": None,
+                    "scheduled_at": None,
+                }
+            },
+        )
+        count = result.modified_count
+        if count > 0:
+            logger.info(
+                f"Recovered {count} failed item(s) for retry "
+                f"(were marked failed with 'send_item() returned False')."
+            )
+        return count
+
     async def update_item_status(
         self,
         item_id,
@@ -110,11 +149,6 @@ class StateRepository(BaseRepository):
         return State(**doc) if doc else None
 
     async def update_state(self, last_processed_id: int) -> None:
-        """
-        Simple set — use only when you are certain the value is the latest
-        (e.g. end of bootstrap scan). Prefer update_state_safe for concurrent
-        scenarios.
-        """
         await self.collection.update_one(
             {"_id": self.state_id},
             {

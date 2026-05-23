@@ -5,6 +5,12 @@ FIX HR-1: Daily counter reset now compares dates using the configured
 TIMEZONE rather than the server's UTC clock.  This ensures the counter
 resets at midnight in the user's local timezone, matching the timezone
 passed to APScheduler.
+
+FIX-PEER: PeerIdInvalid is now explicitly caught and re-queued as
+"pending" rather than "failed".  This is a recoverable session error —
+the target peer wasn't cached yet.  The primary fix (peer resolution at
+startup in main.py) prevents this from ever happening in normal operation,
+but this catch is a defence-in-depth fallback.
 """
 
 import asyncio
@@ -12,7 +18,7 @@ from datetime import datetime
 
 import pytz
 from loguru import logger
-from pyrogram.errors import FloodWait
+from pyrogram.errors import FloodWait, PeerIdInvalid
 
 from app.utils.config import settings
 from app.database.repositories import queue_repo, state_repo
@@ -88,14 +94,33 @@ async def posting_job(sender: TelegramSender) -> None:
             f"FloodWait {wait_seconds}s for item {item.id}. "
             f"Sleeping {sleep_for}s then re-queuing as pending."
         )
-        # Sleep, then re-queue. If the bot shuts down during this sleep,
-        # recover_stale_processing_items() on the next startup will reset
-        # the item back to "pending" automatically.
         await asyncio.sleep(sleep_for)
         await queue_repo.update_item_status(item.id, "pending")
         logger.info(f"Item {item.id} re-queued as pending after FloodWait.")
 
+    except PeerIdInvalid as exc:
+        # Target peer not resolved — this should be prevented by startup peer
+        # resolution in main.py, but handled here as a safety net.
+        # Re-queue as pending; it will work on the next tick once the peer is cached.
+        logger.warning(
+            f"PeerIdInvalid for item {item.id}: {exc}. "
+            "Re-queuing as pending (peer resolution should fix this)."
+        )
+        await queue_repo.update_item_status(item.id, "pending")
+
     except Exception as exc:
+        err_str = str(exc).lower()
+
+        # Fallback string check for Pyrogram builds where PeerIdInvalid
+        # surfaces as a generic exception (version / compile differences).
+        if "peer id invalid" in err_str:
+            logger.warning(
+                f"PeerIdInvalid (via Exception) for item {item.id}: {exc}. "
+                "Re-queuing as pending."
+            )
+            await queue_repo.update_item_status(item.id, "pending")
+            return
+
         logger.error(
             f"Unexpected error processing item {item.id}: {exc}", exc_info=True
         )
