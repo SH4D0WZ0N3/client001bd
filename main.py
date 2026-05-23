@@ -6,17 +6,21 @@ from app.bot import create_bot_instance
 from app.services.telegram_sender import TelegramSender
 from app.services.bootstrap import initial_channel_scan
 from app.scheduler.scheduler import setup_scheduler
-from app.database.repositories import queue_repo
+
+
+def _async_exception_handler(loop, context):
+    msg = context.get("exception", context.get("message", "unknown"))
+    logger.critical(f"Unhandled async exception: {msg}", exc_info=context.get("exception"))
 
 
 async def main() -> None:
     setup_logging()
 
+    loop = asyncio.get_event_loop()
+    loop.set_exception_handler(_async_exception_handler)
+
     await connect_to_mongo()
     await ensure_indexes()
-
-    # Recover any items stuck in 'processing' from a previous crash.
-    await queue_repo.recover_stale_processing_items()
 
     app = create_bot_instance()
     sender = TelegramSender(app)
