@@ -1,8 +1,10 @@
 # app/database/repositories.py
 from motor.motor_asyncio import AsyncIOMotorCollection
+from bson import ObjectId
+from pymongo.errors import DuplicateKeyError
 from app.database.database import get_database
 from app.database.models import QueueItem, State, SentLog
-from typing import Optional, List
+from typing import Optional
 from datetime import datetime, date
 from loguru import logger
 
@@ -15,33 +17,52 @@ class QueueRepository(BaseRepository):
         super().__init__("queue")
 
     async def add_to_queue(self, item: QueueItem) -> Optional[QueueItem]:
-        # Prevent duplicates
-        existing = await self.collection.find_one({"message_id": item.message_id})
-        if existing:
-            logger.warning(f"Message {item.message_id} already in queue. Skipping.")
+        """
+        Inserts a queue item. Uses the unique index on message_id for
+        atomic duplicate prevention — no separate find_one needed.
+        """
+        try:
+            result = await self.collection.insert_one(
+                item.model_dump(by_alias=True, exclude={"id"})
+            )
+            item.id = result.inserted_id
+            return item
+        except DuplicateKeyError:
+            logger.debug(f"Message {item.message_id} already in queue. Skipping.")
             return None
-        
-        result = await self.collection.insert_one(item.model_dump(by_alias=True, exclude=["id"]))
-        item.id = result.inserted_id
-        return item
 
     async def get_next_pending_item(self) -> Optional[QueueItem]:
         raw_item = await self.collection.find_one_and_update(
             {"status": "pending"},
             {"$set": {"status": "processing", "scheduled_at": datetime.utcnow()}},
-            sort=[("message_id", 1)] # Process in order
+            sort=[("message_id", 1)],
+            return_document=True
         )
-        return QueueItem(**raw_item) if raw_item else None
+        if not raw_item:
+            return None
+        return QueueItem(**raw_item)
 
-    async def update_item_status(self, item_id: str, status: str, error_message: Optional[str] = None):
+    async def update_item_status(
+        self,
+        item_id,
+        status: str,
+        error_message: Optional[str] = None
+    ):
+        object_id = ObjectId(item_id) if not isinstance(item_id, ObjectId) else item_id
         update_doc = {"$set": {"status": status}}
         if status == "sent":
             update_doc["$set"]["sent_at"] = datetime.utcnow()
         if status == "failed":
             update_doc["$set"]["error_message"] = error_message
             update_doc["$inc"] = {"retry_count": 1}
-        
-        await self.collection.update_one({"_id": item_id}, update_doc)
+        if status == "pending":
+            # Reset processing state on re-queue
+            update_doc["$set"]["scheduled_at"] = None
+            update_doc["$set"]["error_message"] = None
+
+        result = await self.collection.update_one({"_id": object_id}, update_doc)
+        if result.matched_count == 0:
+            logger.warning(f"update_item_status: no document found for _id={object_id}")
 
 class StateRepository(BaseRepository):
     def __init__(self):
@@ -52,14 +73,10 @@ class StateRepository(BaseRepository):
         state_doc = await self.collection.find_one({"_id": self.state_id})
         return State(**state_doc) if state_doc else None
 
-    async def update_state(self, last_processed_id: int, daily_sent_count: Optional[int] = None):
-        update_doc = {"$set": {"last_processed_message_id": last_processed_id}}
-        if daily_sent_count is not None:
-            update_doc["$set"]["daily_sent_count"] = daily_sent_count
-        
+    async def update_state(self, last_processed_id: int):
         await self.collection.update_one(
             {"_id": self.state_id},
-            update_doc,
+            {"$set": {"last_processed_message_id": last_processed_id}},
             upsert=True
         )
 
@@ -83,9 +100,8 @@ class SentLogRepository(BaseRepository):
         super().__init__("sent_logs")
 
     async def create_log(self, log: SentLog):
-        await self.collection.insert_one(log.model_dump(by_alias=True, exclude=["id"]))
+        await self.collection.insert_one(log.model_dump(by_alias=True, exclude={"id"}))
 
-# Instantiate repositories
 queue_repo = QueueRepository()
 state_repo = StateRepository()
 sent_log_repo = SentLogRepository()

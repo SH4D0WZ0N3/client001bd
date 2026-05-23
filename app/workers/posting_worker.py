@@ -1,5 +1,4 @@
 # app/workers/posting_worker.py
-import asyncio
 from datetime import date
 from loguru import logger
 from pyrogram.errors import FloodWait
@@ -8,50 +7,59 @@ from app.database.repositories import queue_repo, state_repo
 from app.services.telegram_sender import TelegramSender
 
 async def posting_job(sender: TelegramSender):
-    """The main job that gets an item from the queue and posts it."""
-    logger.info("Posting worker job started.")
+    logger.info("Posting worker: tick started.")
 
-    # 1. Check and reset daily counter
-    state = await state_repo.get_state()
+    # 1. Reset daily counter if it's a new day
     today_str = date.today().isoformat()
+    state = await state_repo.get_state()
 
-    if not state or state.last_reset_date != today_str:
-        logger.info(f"New day ({today_str}). Resetting daily post counter.")
+    if state is None or state.last_reset_date != today_str:
+        logger.info(f"New day ({today_str}). Resetting daily counter.")
         await state_repo.reset_daily_counter()
         state = await state_repo.get_state()
 
-    # 2. Check daily limit
-    if state.daily_sent_count >= settings.DAILY_LIMIT:
-        logger.warning(f"Daily post limit reached ({state.daily_sent_count}/{settings.DAILY_LIMIT}). Pausing until next reset.")
+    # 2. Guard against None state (first-ever run after reset)
+    if state is None:
+        logger.warning("State is None after reset — skipping this tick.")
         return
 
-    # 3. Get next item from queue
+    # 3. Enforce daily limit
+    if state.daily_sent_count >= settings.DAILY_LIMIT:
+        logger.warning(
+            f"Daily limit reached ({state.daily_sent_count}/{settings.DAILY_LIMIT}). "
+            "Waiting for next reset."
+        )
+        return
+
+    # 4. Dequeue next item
     item = await queue_repo.get_next_pending_item()
     if not item:
-        logger.info("Queue is empty. Nothing to post.")
+        logger.info("Queue empty. Nothing to post.")
         return
 
-    logger.info(f"Processing item from queue: Source Message ID {item.message_id}")
+    logger.info(f"Processing queue item: source message ID {item.message_id}")
 
-    # 4. Try to send the item
+    # 5. Send
     try:
         success = await sender.send_item(item)
         if success:
             await queue_repo.update_item_status(item.id, "sent")
             await state_repo.increment_daily_sent_count()
         else:
-            # Handle non-exception failures (e.g., message deleted)
-            logger.error(f"Sending failed for item {item.id}. Marking as failed.")
-            await queue_repo.update_item_status(item.id, "failed", "Sending process returned False")
+            logger.error(f"Send returned False for item {item.id}. Marking failed.")
+            await queue_repo.update_item_status(
+                item.id, "failed", "send_item() returned False"
+            )
 
     except FloodWait as e:
-        # This is a special case. We want to pause and retry this specific item later.
-        logger.warning(f"FloodWait for item {item.id}. Re-queueing as pending to retry later.")
+        logger.warning(
+            f"FloodWait {e.value}s for item {item.id}. Re-queuing as pending."
+        )
+        # Reset to pending so it gets picked up next interval
         await queue_repo.update_item_status(item.id, "pending")
-        # The scheduler's interval will naturally create a pause.
-        # For a more aggressive retry, you could sleep here, but it's better to let the scheduler handle it.
+
     except Exception as e:
-        logger.error(f"An unexpected error occurred while processing item {item.id}: {e}", exc_info=True)
+        logger.error(f"Unexpected error for item {item.id}: {e}", exc_info=True)
         await queue_repo.update_item_status(item.id, "failed", str(e))
 
-    logger.info("Posting worker job finished.")
+    logger.info("Posting worker: tick complete.")

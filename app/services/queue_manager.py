@@ -1,6 +1,6 @@
 # app/services/queue_manager.py
 import asyncio
-from typing import Dict
+from typing import Dict, List
 from pyrogram.types import Message
 from loguru import logger
 from app.database.models import QueueItem
@@ -8,17 +8,16 @@ from app.database.repositories import queue_repo
 
 class QueueManager:
     def __init__(self):
-        # In-memory buffer for media groups
-        # Key: media_group_id, Value: list of message objects
-        self.media_group_buffer: Dict[str, list[Message]] = {}
-        # Key: media_group_id, Value: asyncio.Task
-        self.media_group_timers: Dict[str, asyncio.Task] = {}
+        self._buffer: Dict[str, List[Message]] = {}
+        self._timers: Dict[str, asyncio.Task] = {}
+        self._locks: Dict[str, asyncio.Lock] = {}
+
+    def _get_lock(self, media_group_id: str) -> asyncio.Lock:
+        if media_group_id not in self._locks:
+            self._locks[media_group_id] = asyncio.Lock()
+        return self._locks[media_group_id]
 
     async def add_message_to_queue(self, message: Message):
-        """
-        Adds a message to the processing queue.
-        Handles media groups by buffering them.
-        """
         if message.media_group_id:
             await self._handle_media_group_message(message)
         else:
@@ -31,47 +30,56 @@ class QueueManager:
 
     async def _handle_media_group_message(self, message: Message):
         media_group_id = message.media_group_id
-        logger.debug(f"Buffering message {message.id} for media group {media_group_id}")
+        lock = self._get_lock(media_group_id)
 
-        # Add message to buffer
-        if media_group_id not in self.media_group_buffer:
-            self.media_group_buffer[media_group_id] = []
-        self.media_group_buffer[media_group_id].append(message)
+        async with lock:
+            logger.debug(f"Buffering message {message.id} for media group {media_group_id}")
 
-        # If a timer is already running for this group, cancel it
-        if media_group_id in self.media_group_timers:
-            self.media_group_timers[media_group_id].cancel()
+            if media_group_id not in self._buffer:
+                self._buffer[media_group_id] = []
+            self._buffer[media_group_id].append(message)
 
-        # Start a new timer to process the group after a short delay
-        self.media_group_timers[media_group_id] = asyncio.create_task(
-            self._process_media_group_after_delay(media_group_id)
-        )
+            # Cancel existing flush timer and restart it
+            existing_task = self._timers.get(media_group_id)
+            if existing_task and not existing_task.done():
+                existing_task.cancel()
+                try:
+                    await existing_task
+                except asyncio.CancelledError:
+                    pass
 
-    async def _process_media_group_after_delay(self, media_group_id: str, delay: int = 3):
-        """Waits for a delay then processes the buffered media group."""
+            self._timers[media_group_id] = asyncio.create_task(
+                self._flush_media_group(media_group_id, delay=3)
+            )
+
+    async def _flush_media_group(self, media_group_id: str, delay: int = 3):
+        """Wait for more messages, then flush the buffer to the DB queue."""
         await asyncio.sleep(delay)
-        
-        messages = self.media_group_buffer.pop(media_group_id, [])
+
+        lock = self._get_lock(media_group_id)
+        async with lock:
+            messages = self._buffer.pop(media_group_id, [])
+            self._timers.pop(media_group_id, None)
+            self._locks.pop(media_group_id, None)
+
         if not messages:
+            logger.warning(f"Media group {media_group_id} flushed but buffer was empty.")
             return
 
-        # Sort messages by ID to maintain order
         messages.sort(key=lambda m: m.id)
-        
         message_ids = [m.id for m in messages]
-        # Use the first message_id as the primary identifier for the queue item
         first_message_id = message_ids[0]
 
-        logger.info(f"Queueing media group {media_group_id} with {len(message_ids)} items. First message ID: {first_message_id}")
+        logger.info(
+            f"Flushing media group {media_group_id}: "
+            f"{len(message_ids)} messages, first ID: {first_message_id}"
+        )
 
         item = QueueItem(
             message_id=first_message_id,
             media_group_id=media_group_id,
-            message_ids=message_ids
+            message_ids=message_ids,
         )
         await queue_repo.add_to_queue(item)
-
-        # Clean up timer task
-        self.media_group_timers.pop(media_group_id, None)
 
 queue_manager = QueueManager()

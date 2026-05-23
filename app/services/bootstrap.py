@@ -7,33 +7,55 @@ from app.services.queue_manager import queue_manager
 
 async def initial_channel_scan(client: Client):
     """
-    Scans the source channel from a starting message ID and queues up all messages.
-    This runs only if the state indicates it's the first run.
+    Scans the source channel forward from START_MESSAGE_ID and queues everything.
+    Skipped if a completed scan is already recorded in state.
     """
     state = await state_repo.get_state()
     if state and state.last_processed_message_id > settings.START_MESSAGE_ID:
-        logger.info("Initial scan already completed. Skipping.")
+        logger.info(
+            f"Initial scan already done "
+            f"(last processed: {state.last_processed_message_id}). Skipping."
+        )
         return
 
-    start_id = settings.START_MESSAGE_ID
-    logger.info(f"Performing initial channel scan from message ID: {start_id}...")
+    logger.info(f"Starting initial channel scan from message ID {settings.START_MESSAGE_ID}...")
 
     last_id = 0
+    queued = 0
+    skipped = 0
+
     try:
-        async for message in client.get_chat_history(settings.SOURCE_CHANNEL_ID, offset_id=start_id, reverse=True):
-            if message.service: # Skip service messages like 'user joined'
+        # get_chat_history with offset_id=X and reverse=True fetches messages
+        # with id >= X in ascending order. offset_id=0 means start from beginning.
+        # To start from a specific ID, we use offset_id = START_MESSAGE_ID - 1
+        # so the first returned message has id >= START_MESSAGE_ID.
+        offset = max(0, settings.START_MESSAGE_ID - 1)
+
+        async for message in client.get_chat_history(
+            settings.SOURCE_CHANNEL_ID,
+            offset_id=offset,
+            reverse=True,
+        ):
+            if message.service:
+                skipped += 1
                 continue
-            
+
             await queue_manager.add_message_to_queue(message)
             last_id = message.id
-            if last_id % 100 == 0:
-                logger.info(f"Scanned up to message ID: {last_id}")
+            queued += 1
+
+            if queued % 100 == 0:
+                logger.info(f"Scan progress: {queued} messages queued, last ID: {last_id}")
 
         if last_id > 0:
             await state_repo.update_state(last_processed_id=last_id)
-            logger.success(f"Initial scan complete. Last processed message ID: {last_id}")
+            logger.success(
+                f"Initial scan complete. Queued: {queued}, Skipped: {skipped}, "
+                f"Last message ID: {last_id}"
+            )
         else:
-            logger.warning("Initial scan finished, but no new messages were found to queue.")
+            logger.warning("Initial scan found no messages to queue.")
 
     except Exception as e:
-        logger.error(f"An error occurred during initial channel scan: {e}", exc_info=True)
+        logger.error(f"Initial scan failed: {e}", exc_info=True)
+        raise

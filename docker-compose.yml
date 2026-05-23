@@ -1,24 +1,33 @@
-# docker-compose.yml
 version: "3.8"
 
 services:
   bot:
     build: .
-    restart: always
+    restart: unless-stopped
     env_file:
       - .env
     volumes:
-      - .:/app
+      - bot_sessions:/app/sessions
+      - bot_logs:/app/logs
     depends_on:
-      - mongo
+      mongo:
+        condition: service_healthy
 
   mongo:
-    image: mongo:latest
-    restart: always
+    image: mongo:7
+    restart: unless-stopped
     volumes:
       - mongodb_data:/data/db
     environment:
-      - MONGO_INITDB_DATABASE=telegram_premium_bot
+      - MONGO_INITDB_DATABASE=telegram_bot
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
 volumes:
   mongodb_data:
+  bot_sessions:
+  bot_logs:

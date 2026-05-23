@@ -1,0 +1,1 @@
+from app.bot.bot import create_bot_instance
