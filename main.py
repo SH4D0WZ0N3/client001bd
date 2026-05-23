@@ -20,15 +20,42 @@ def _async_exception_handler(loop, context):
     )
 
 
-async def _resolve_peers(app) -> None:
+async def _warm_up_peers(app) -> None:
     """
-    Pre-warm Pyrogram's internal peer cache for both channels.
+    Populate Pyrogram's peer cache before the scheduler fires.
 
-    Without this, Pyrogram throws PeerIdInvalid on the very first
-    copy_message / send_photo call because it has never "seen" the
-    target channel in the current session — even if the bot is an admin
-    there.  get_chat() forces an API round-trip that populates the cache.
+    Root cause of PeerIdInvalid:
+    Pyrogram stores channel access hashes in the session SQLite database.
+    On a fresh session (or after session reset), the bot has NEVER sent to
+    these channels, so no access hashes are cached.  get_chat(integer_id)
+    cannot resolve a peer it has no access hash for — it's circular.
+
+    The fix: get_dialogs() calls messages.GetDialogs via MTProto, which
+    Telegram responds to with all channels/groups the bot is a member of,
+    including their full peer info (access hashes).  Pyrogram automatically
+    stores these in the session peer table, making all subsequent send calls
+    work correctly.
+
+    Fallback: if get_dialogs() fails for any reason, a 5-second sleep lets
+    Pyrogram process the initial update diff that Telegram always sends on
+    connect, which also includes channel peer info.
     """
+    try:
+        logger.info("Warming up peer cache via get_dialogs()…")
+        count = 0
+        async for _ in app.get_dialogs():
+            count += 1
+        logger.info(f"Peer cache populated: {count} dialog(s) loaded.")
+    except Exception as exc:
+        logger.warning(
+            f"get_dialogs() failed ({exc}). "
+            "Falling back to 5-second startup delay for update-based peer caching."
+        )
+        # Pyrogram's update handler processes pending updates on startup,
+        # which also includes channel peer info.  Give it a few seconds.
+        await asyncio.sleep(5)
+
+    # Verify both channels are now resolvable
     for chat_id, label in [
         (settings.SOURCE_CHANNEL_ID, "source"),
         (settings.TARGET_CHAT_ID, "target"),
@@ -40,9 +67,11 @@ async def _resolve_peers(app) -> None:
                 f"'{getattr(chat, 'title', chat_id)}' (id={chat.id})"
             )
         except Exception as exc:
+            # Non-fatal: posting_worker will re-queue on PeerIdInvalid.
+            # Log as error so the operator knows to check channel permissions.
             logger.error(
-                f"Failed to resolve {label} peer (id={chat_id}): {exc}. "
-                f"Verify the bot is an admin in that channel and the ID is correct."
+                f"Could not resolve {label} peer (id={chat_id}): {exc}. "
+                f"Check that the bot is an admin in that channel and the ID is correct."
             )
 
 
@@ -59,9 +88,9 @@ async def main() -> None:
     # Recover items stuck in "processing" from a previous crash
     await queue_repo.recover_stale_processing_items()
 
-    # Recover items that failed with "send_item() returned False" — these are
-    # typically PeerIdInvalid failures caused by the peer-not-cached issue.
-    # Resetting them allows a clean retry after this deployment.
+    # Recover items that were permanently-failed due to PeerIdInvalid
+    # (marked with error_message="send_item() returned False").
+    # After peer warm-up below these will send normally.
     await queue_repo.recover_send_failed_items()
 
     # ── Bot client ────────────────────────────────────────────────────────────
@@ -71,9 +100,9 @@ async def main() -> None:
     await app.start()
     logger.success("Bot client started.")
 
-    # CRITICAL: resolve peer cache BEFORE the scheduler fires its first tick.
-    # This is the primary fix for PeerIdInvalid on first send.
-    await _resolve_peers(app)
+    # CRITICAL: populate peer cache BEFORE the scheduler fires its first tick.
+    # This is the primary fix for PeerIdInvalid on fresh/reset sessions.
+    await _warm_up_peers(app)
 
     # ── Bootstrap (historical scan) ───────────────────────────────────────────
     try:
