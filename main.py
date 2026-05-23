@@ -20,59 +20,85 @@ def _async_exception_handler(loop, context):
     )
 
 
-async def _warm_up_peers(app) -> None:
+async def _warm_up_peers(app) -> bool:
     """
-    Populate Pyrogram's peer cache before the scheduler fires.
+    Wait for Pyrogram to sync pending updates from Telegram and populate
+    the peer cache, then verify both channels are resolvable.
 
-    Root cause of PeerIdInvalid:
-    Pyrogram stores channel access hashes in the session SQLite database.
-    On a fresh session (or after session reset), the bot has NEVER sent to
-    these channels, so no access hashes are cached.  get_chat(integer_id)
-    cannot resolve a peer it has no access hash for — it's circular.
+    Why this is needed:
+    - On connect, Telegram sends pending updates asynchronously.
+    - These updates contain access_hash values for channels the bot is in.
+    - Until they are processed, any get_chat(numeric_id) raises ValueError.
+    - get_dialogs() is blocked for bots (BOT_METHOD_INVALID).
+    - Solution: wait for update processing, then retry peer resolution.
 
-    The fix: get_dialogs() calls messages.GetDialogs via MTProto, which
-    Telegram responds to with all channels/groups the bot is a member of,
-    including their full peer info (access hashes).  Pyrogram automatically
-    stores these in the session peer table, making all subsequent send calls
-    work correctly.
-
-    Fallback: if get_dialogs() fails for any reason, a 5-second sleep lets
-    Pyrogram process the initial update diff that Telegram always sends on
-    connect, which also includes channel peer info.
+    Returns True if both peers resolved, False if timed out.
     """
-    try:
-        logger.info("Warming up peer cache via get_dialogs()…")
-        count = 0
-        async for _ in app.get_dialogs():
-            count += 1
-        logger.info(f"Peer cache populated: {count} dialog(s) loaded.")
-    except Exception as exc:
-        logger.warning(
-            f"get_dialogs() failed ({exc}). "
-            "Falling back to 5-second startup delay for update-based peer caching."
-        )
-        # Pyrogram's update handler processes pending updates on startup,
-        # which also includes channel peer info.  Give it a few seconds.
-        await asyncio.sleep(5)
+    # Phase 1: Wait for Pyrogram's update sync to complete.
+    # On a fresh connect, Telegram sends a GetDifference response that
+    # includes all channel peer info. Pyrogram processes this asynchronously.
+    # 20 seconds is generous but reliable even on slow Railway connections.
+    logger.info("Waiting for Pyrogram update sync (20s)…")
+    await asyncio.sleep(20)
 
-    # Verify both channels are now resolvable
-    for chat_id, label in [
-        (settings.SOURCE_CHANNEL_ID, "source"),
-        (settings.TARGET_CHAT_ID, "target"),
-    ]:
-        try:
-            chat = await app.get_chat(chat_id)
+    # Phase 2: Retry peer resolution until both channels are confirmed.
+    _MAX_ATTEMPTS = 10
+    _RETRY_DELAY = 10  # seconds
+
+    source_ok = False
+    target_ok = False
+
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        if not source_ok:
+            try:
+                chat = await app.get_chat(settings.SOURCE_CHANNEL_ID)
+                logger.info(
+                    f"Source peer resolved: '{getattr(chat, 'title', chat.id)}' "
+                    f"(id={chat.id})"
+                )
+                source_ok = True
+            except (ValueError, Exception) as exc:
+                logger.warning(
+                    f"Source peer not yet cached "
+                    f"(attempt {attempt}/{_MAX_ATTEMPTS}): {exc}"
+                )
+
+        if not target_ok:
+            try:
+                chat = await app.get_chat(settings.TARGET_CHAT_ID)
+                logger.info(
+                    f"Target peer resolved: '{getattr(chat, 'title', chat.id)}' "
+                    f"(id={chat.id})"
+                )
+                target_ok = True
+            except (ValueError, Exception) as exc:
+                logger.warning(
+                    f"Target peer not yet cached "
+                    f"(attempt {attempt}/{_MAX_ATTEMPTS}): {exc}"
+                )
+
+        if source_ok and target_ok:
+            logger.info("Both peers resolved. Bot is ready to send.")
+            return True
+
+        if attempt < _MAX_ATTEMPTS:
             logger.info(
-                f"{label.capitalize()} peer resolved: "
-                f"'{getattr(chat, 'title', chat_id)}' (id={chat.id})"
+                f"Peers not ready yet "
+                f"(source={source_ok}, target={target_ok}). "
+                f"Retrying in {_RETRY_DELAY}s… "
+                f"Send a message in the source channel to speed this up."
             )
-        except Exception as exc:
-            # Non-fatal: posting_worker will re-queue on PeerIdInvalid.
-            # Log as error so the operator knows to check channel permissions.
-            logger.error(
-                f"Could not resolve {label} peer (id={chat_id}): {exc}. "
-                f"Check that the bot is an admin in that channel and the ID is correct."
-            )
+            await asyncio.sleep(_RETRY_DELAY)
+
+    logger.error(
+        f"Peer warmup timed out after {_MAX_ATTEMPTS} attempts. "
+        f"source={source_ok}, target={target_ok}. "
+        f"VERIFY: (1) Bot is admin in BOTH channels. "
+        f"(2) SOURCE_CHANNEL_ID={settings.SOURCE_CHANNEL_ID} is correct. "
+        f"(3) TARGET_CHAT_ID={settings.TARGET_CHAT_ID} is correct. "
+        f"Scheduler will start but sends may fail until peers resolve."
+    )
+    return False
 
 
 async def main() -> None:
@@ -84,13 +110,7 @@ async def main() -> None:
     # ── Database ──────────────────────────────────────────────────────────────
     await connect_to_mongo()
     await ensure_indexes()
-
-    # Recover items stuck in "processing" from a previous crash
     await queue_repo.recover_stale_processing_items()
-
-    # Recover items that were permanently-failed due to PeerIdInvalid
-    # (marked with error_message="send_item() returned False").
-    # After peer warm-up below these will send normally.
     await queue_repo.recover_send_failed_items()
 
     # ── Bot client ────────────────────────────────────────────────────────────
@@ -100,21 +120,23 @@ async def main() -> None:
     await app.start()
     logger.success("Bot client started.")
 
-    # CRITICAL: populate peer cache BEFORE the scheduler fires its first tick.
-    # This is the primary fix for PeerIdInvalid on fresh/reset sessions.
-    await _warm_up_peers(app)
+    # Wait for peer cache to populate before starting the scheduler.
+    # This is the primary fix for PeerIdInvalid on startup.
+    peers_ready = await _warm_up_peers(app)
 
-    # ── Bootstrap (historical scan) ───────────────────────────────────────────
+    # ── Bootstrap ─────────────────────────────────────────────────────────────
     try:
         await initial_channel_scan(app)
     except Exception as exc:
         logger.error(
-            f"Initial channel scan failed (bot continues running): {exc}",
+            f"Initial channel scan failed (bot continues): {exc}",
             exc_info=True,
         )
 
     # ── Scheduler ─────────────────────────────────────────────────────────────
-    scheduler = setup_scheduler(sender)
+    # If peers resolved, fire first tick immediately.
+    # If not, add a 60-second delay before first tick to give more time.
+    scheduler = setup_scheduler(sender, immediate=peers_ready)
 
     # ── Signal handling ───────────────────────────────────────────────────────
     stop_event = asyncio.Event()
@@ -133,7 +155,6 @@ async def main() -> None:
     except asyncio.CancelledError:
         logger.warning("Main task cancelled.")
     finally:
-        # ── Shutdown sequence ─────────────────────────────────────────────────
         logger.info("Shutting down scheduler…")
         if scheduler.running:
             scheduler.shutdown(wait=False)

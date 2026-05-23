@@ -1,34 +1,22 @@
-"""
-APScheduler setup.
-
-FIX HR-5: next_run_time is set to now() so the first posting tick fires
-immediately on startup rather than waiting a full SEND_INTERVAL_SECONDS
-after launch.  This means the bot starts posting as soon as it's ready
-rather than sitting idle for up to 30 minutes after a restart.
-"""
-
-from datetime import datetime
-
+from datetime import datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.executors.asyncio import AsyncIOExecutor
 from pytz import timezone
 from loguru import logger
-
 from app.utils.config import settings
 from app.workers.posting_worker import posting_job
 from app.services.telegram_sender import TelegramSender
 
 
-def setup_scheduler(sender: TelegramSender) -> AsyncIOScheduler:
+def setup_scheduler(
+    sender: TelegramSender,
+    immediate: bool = True,
+) -> AsyncIOScheduler:
     logger.info("Setting up APScheduler…")
 
-    # MongoDBJobStore + AsyncIOExecutor are incompatible at serialization time.
-    # MemoryJobStore is correct here — the job is re-registered from code on
-    # every startup (replace_existing=True), so persistence adds no value.
     jobstores = {"default": MemoryJobStore()}
     executors = {"default": AsyncIOExecutor()}
-
     tz = timezone(settings.TIMEZONE)
 
     scheduler = AsyncIOScheduler(
@@ -36,6 +24,20 @@ def setup_scheduler(sender: TelegramSender) -> AsyncIOScheduler:
         executors=executors,
         timezone=tz,
     )
+
+    now = datetime.now(tz=tz)
+
+    if immediate:
+        # Peers are confirmed ready — fire immediately
+        first_run = now
+        logger.info("First scheduler tick: immediate (peers resolved).")
+    else:
+        # Peers not confirmed — delay first tick to give more warmup time
+        first_run = now + timedelta(seconds=60)
+        logger.warning(
+            "First scheduler tick delayed 60s (peer warmup timed out). "
+            "Sends will retry automatically once peers resolve."
+        )
 
     scheduler.add_job(
         posting_job,
@@ -46,15 +48,12 @@ def setup_scheduler(sender: TelegramSender) -> AsyncIOScheduler:
         replace_existing=True,
         max_instances=1,
         misfire_grace_time=120,
-        # Fire the first tick immediately so posting resumes right after
-        # startup instead of waiting a full interval.
-        next_run_time=datetime.now(tz=tz),
+        next_run_time=first_run,
     )
 
     scheduler.start()
     logger.info(
-        f"Scheduler started. Posting interval: {settings.SEND_INTERVAL_SECONDS}s. "
-        f"Timezone: {settings.TIMEZONE}. "
-        f"First tick: immediate."
+        f"Scheduler started. Interval: {settings.SEND_INTERVAL_SECONDS}s. "
+        f"Timezone: {settings.TIMEZONE}."
     )
     return scheduler
