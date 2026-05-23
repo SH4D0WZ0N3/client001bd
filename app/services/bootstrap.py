@@ -1,4 +1,5 @@
 from pyrogram import Client
+from pyrogram.errors import PeerIdInvalid, ChannelInvalid
 from loguru import logger
 from app.utils.config import settings
 from app.database.repositories import state_repo
@@ -11,28 +12,15 @@ async def initial_channel_scan(client: Client) -> None:
     non-service message into the queue.
 
     Skipped entirely when state already records a processed message ID that
-    is strictly greater than START_MESSAGE_ID, meaning a previous successful
-    scan has already run.
+    is strictly greater than START_MESSAGE_ID.
 
     Pyrogram 2.x get_chat_history() does NOT support a `reverse` parameter.
-    Messages are returned newest → oldest by default.
+    Messages are returned newest → oldest. We collect, then sort ascending.
 
-    Strategy:
-        - Collect all messages into a list (newest→oldest from Pyrogram)
-        - Sort ascending by message ID before queueing
-        - This ensures queue insertion order matches source order, and that
-          last_processed_message_id is set to the true highest ID seen.
-
-    offset_id semantics in Pyrogram 2.x get_chat_history:
-        offset_id=N  →  returns messages with id < N (i.e. older than N)
-        offset_id=0  →  starts from the very latest message
-
-    To include START_MESSAGE_ID itself we set offset_id = START_MESSAGE_ID + 1
-    so that the first batch contains message IDs <= START_MESSAGE_ID (i.e. the
-    target message is not excluded).
-
-    Note: for very large channels (10k+ messages) consider chunked processing.
-    For typical use-cases the full collect-and-sort approach is fine.
+    Peer resolution: get_chat() must be called before get_chat_history() so
+    that Pyrogram's internal peer cache is populated for this channel ID.
+    Without this, any channel the bot hasn't interacted with yet raises
+    PeerIdInvalid even with a correct numeric ID.
     """
     state = await state_repo.get_state()
     if state is not None and state.last_processed_message_id > settings.START_MESSAGE_ID:
@@ -42,9 +30,23 @@ async def initial_channel_scan(client: Client) -> None:
         )
         return
 
-    # offset_id=N means "fetch messages older than N".
-    # Setting it to START_MESSAGE_ID + 1 ensures the message at START_MESSAGE_ID
-    # is included in the first batch returned.
+    # --- Peer resolution ---
+    # Must be called before any history/message operations.
+    # Populates Pyrogram's internal peer cache for this channel.
+    try:
+        chat = await client.get_chat(settings.SOURCE_CHANNEL_ID)
+        logger.info(
+            f"Source channel resolved: '{chat.title}' "
+            f"(id={chat.id}, type={chat.type})"
+        )
+    except (PeerIdInvalid, ChannelInvalid) as exc:
+        raise RuntimeError(
+            f"Cannot resolve source channel {settings.SOURCE_CHANNEL_ID}. "
+            f"Ensure the bot is an admin/member of that channel. Error: {exc}"
+        )
+
+    # offset_id=N means "fetch messages with id < N".
+    # START_MESSAGE_ID + 1 ensures the message at START_MESSAGE_ID is included.
     offset = settings.START_MESSAGE_ID + 1
 
     logger.info(
@@ -70,8 +72,6 @@ async def initial_channel_scan(client: Client) -> None:
             return
 
         # Sort ascending so queue insertion order matches source chronology.
-        # The queue dequeues by message_id ASC anyway, but correct order here
-        # makes last_processed_message_id tracking unambiguous.
         collected.sort(key=lambda m: m.id)
 
         logger.info(

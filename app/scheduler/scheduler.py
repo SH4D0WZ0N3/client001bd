@@ -1,7 +1,6 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.jobstores.mongodb import MongoDBJobStore
+from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.executors.asyncio import AsyncIOExecutor
-from pymongo import MongoClient
 from pytz import timezone
 from loguru import logger
 from app.utils.config import settings
@@ -12,17 +11,14 @@ from app.services.telegram_sender import TelegramSender
 def setup_scheduler(sender: TelegramSender) -> AsyncIOScheduler:
     logger.info("Setting up APScheduler…")
 
-    # MongoDBJobStore requires a *synchronous* PyMongo client.
-    # Passing MONGO_URI directly (not as 'host=') handles full URI strings
-    # including auth credentials and replica-set params correctly.
-    sync_mongo = MongoClient(settings.MONGO_URI)
-
+    # MongoDBJobStore + AsyncIOExecutor are incompatible:
+    # MongoDBJobStore pickles jobs on save; AsyncIOExecutor contains
+    # non-picklable objects (_queue.SimpleQueue). This causes a fatal
+    # crash at startup. Since the job is re-registered from code on every
+    # startup (replace_existing=True), MongoDB persistence of the job
+    # definition provides zero benefit. MemoryJobStore is correct here.
     jobstores = {
-        "default": MongoDBJobStore(
-            database="apscheduler",
-            collection="jobs",
-            client=sync_mongo,
-        )
+        "default": MemoryJobStore()
     }
     executors = {
         "default": AsyncIOExecutor()
@@ -41,8 +37,8 @@ def setup_scheduler(sender: TelegramSender) -> AsyncIOScheduler:
         args=[sender],
         id="posting_worker_job",
         replace_existing=True,
-        max_instances=1,         # Prevent overlapping executions
-        misfire_grace_time=120,  # Allow up to 2-minute late start
+        max_instances=1,
+        misfire_grace_time=120,
     )
 
     scheduler.start()
