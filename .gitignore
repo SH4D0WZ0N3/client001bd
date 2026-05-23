@@ -4,10 +4,13 @@
 __pycache__/
 *.py[cod]
 *$py.class
+
+# C extensions
 *.so
+
+# Distribution / packaging
 .Python
 build/
-bot_data.db
 dist/
 downloads/
 eggs/
@@ -18,81 +21,46 @@ parts/
 sdist/
 var/
 wheels/
-share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
-.vscode/*
-!.vscode/settings.json
-!.vscode/extensions.json
+
+# =========================
 # Virtual Environment
+# =========================
 venv/
 env/
 ENV/
 .venv/
 
 # =========================
-# Environment & Secrets
+# Environment Variables
 # =========================
 .env
-.env.*
+.env.local
+.env.*.local
+
+# Keep template env public
 !.env.example
-.env.production
-
-# Secrets
-*.pem
-*.key
-*.crt
-*.p12
-*.pfx
-secrets.json
-credentials.json
-
-# =========================
-# Database
-# =========================
-*.db
-*.sqlite3
-*.sqlite
-*.sql
 
 # =========================
 # Logs
 # =========================
-*.log
 logs/
-*.out
-*.err
+*.log
 
 # =========================
-# Cache
+# Pyrogram Session Files
 # =========================
-.cache/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.tox/
-coverage/
-htmlcov/
-
-# =========================
-# Telegram Bot
-# =========================
-session/
-sessions/
 *.session
 *.session-journal
+sessions/
 
 # =========================
-# Node.js
+# MongoDB Local Data
 # =========================
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-package-lock.json
-pnpm-lock.yaml
+mongodb/
+mongo-data/
 
 # =========================
 # IDE / Editor
@@ -109,12 +77,13 @@ pnpm-lock.yaml
 Thumbs.db
 
 # =========================
-# Deployment
+# Testing / Coverage
 # =========================
-.vercel/
-.netlify/
-.railway/
-render.yaml
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
 
 # =========================
 # Docker
@@ -122,18 +91,18 @@ render.yaml
 docker-compose.override.yml
 
 # =========================
-# Testing
+# Temporary Files
 # =========================
-.coverage
-coverage.xml
-nosetests.xml
-pytestdebug.log
+tmp/
+temp/
+*.tmp
+
+# =========================
+# Node (if frontend/admin added later)
+# =========================
+node_modules/
 
 # =========================
 # Misc
 # =========================
-tmp/
-temp/
-*.bak
-*.backup
-*.old
+.cache/

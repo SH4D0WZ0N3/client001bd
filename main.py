@@ -1,4 +1,3 @@
-# main.py
 import asyncio
 from loguru import logger
 from app.utils.logging import setup_logging
@@ -8,7 +7,8 @@ from app.services.telegram_sender import TelegramSender
 from app.services.bootstrap import initial_channel_scan
 from app.scheduler.scheduler import setup_scheduler
 
-async def main():
+
+async def main() -> None:
     setup_logging()
 
     await connect_to_mongo()
@@ -46,5 +46,5 @@ async def main():
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except Exception as e:
-        logger.critical(f"Fatal startup error: {e}", exc_info=True)
+    except Exception as exc:
+        logger.critical(f"Fatal startup error: {exc}", exc_info=True)

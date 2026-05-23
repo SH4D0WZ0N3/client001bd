@@ -1,5 +1,5 @@
-# app/utils/config.py
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 class Settings(BaseSettings):
     # Telegram
@@ -16,15 +16,19 @@ class Settings(BaseSettings):
     PUBLIC_CHANNEL_LINK: str
 
     # Content
-    FIXED_CAPTION: str
-    WATERMARK: str
+    FIXED_CAPTION: str = ""
+    WATERMARK: str = ""
 
     # Scheduling
     DAILY_LIMIT: int
     SEND_INTERVAL_SECONDS: int
-    START_MESSAGE_ID: int
-    TIMEZONE: str
+    START_MESSAGE_ID: int = 1
+    TIMEZONE: str = "UTC"
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+    )
+
 
 settings = Settings()

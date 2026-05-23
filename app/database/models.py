@@ -1,8 +1,8 @@
-# app/database/models.py
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 from bson import ObjectId
+
 
 class PyObjectId(ObjectId):
     @classmethod
@@ -24,8 +24,8 @@ class QueueItem(BaseModel):
     id: Optional[PyObjectId] = Field(alias="_id", default=None)
     message_id: int
     media_group_id: Optional[str] = None
-    message_ids: Optional[List[int]] = None # For media groups
-    status: str = "pending"  # pending, processing, sent, failed
+    message_ids: Optional[List[int]] = None
+    status: str = "pending"
     created_at: datetime = Field(default_factory=datetime.utcnow)
     scheduled_at: Optional[datetime] = None
     sent_at: Optional[datetime] = None
@@ -36,15 +36,17 @@ class QueueItem(BaseModel):
         arbitrary_types_allowed = True
         json_encoders = {ObjectId: str}
 
+
 class State(BaseModel):
     id: str = Field(alias="_id")
-    last_processed_message_id: int
-    daily_sent_count: int
-    last_reset_date: str # YYYY-MM-DD
+    last_processed_message_id: int = 0
+    daily_sent_count: int = 0
+    last_reset_date: str = ""
 
     class Config:
         arbitrary_types_allowed = True
         json_encoders = {ObjectId: str}
+
 
 class SentLog(BaseModel):
     id: Optional[PyObjectId] = Field(alias="_id", default=None)
@@ -52,7 +54,7 @@ class SentLog(BaseModel):
     target_chat_id: int
     target_message_ids: List[int]
     sent_at: datetime = Field(default_factory=datetime.utcnow)
-    status: str # success, failure
+    status: str
 
     class Config:
         arbitrary_types_allowed = True
