@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.executors.asyncio import AsyncIOExecutor
@@ -9,10 +9,7 @@ from app.workers.posting_worker import posting_job
 from app.services.telegram_sender import TelegramSender
 
 
-def setup_scheduler(
-    sender: TelegramSender,
-    immediate: bool = True,
-) -> AsyncIOScheduler:
+def setup_scheduler(sender: TelegramSender) -> AsyncIOScheduler:
     logger.info("Setting up APScheduler…")
 
     jobstores = {"default": MemoryJobStore()}
@@ -25,20 +22,6 @@ def setup_scheduler(
         timezone=tz,
     )
 
-    now = datetime.now(tz=tz)
-
-    if immediate:
-        # Peers are confirmed ready — fire immediately
-        first_run = now
-        logger.info("First scheduler tick: immediate (peers resolved).")
-    else:
-        # Peers not confirmed — delay first tick to give more warmup time
-        first_run = now + timedelta(seconds=60)
-        logger.warning(
-            "First scheduler tick delayed 60s (peer warmup timed out). "
-            "Sends will retry automatically once peers resolve."
-        )
-
     scheduler.add_job(
         posting_job,
         trigger="interval",
@@ -48,12 +31,12 @@ def setup_scheduler(
         replace_existing=True,
         max_instances=1,
         misfire_grace_time=120,
-        next_run_time=first_run,
+        next_run_time=datetime.now(tz=tz),
     )
 
     scheduler.start()
     logger.info(
         f"Scheduler started. Interval: {settings.SEND_INTERVAL_SECONDS}s. "
-        f"Timezone: {settings.TIMEZONE}."
+        f"Timezone: {settings.TIMEZONE}. First tick: immediate."
     )
     return scheduler

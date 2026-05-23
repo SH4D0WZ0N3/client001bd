@@ -1,18 +1,3 @@
-"""
-TelegramSender — copies source channel content to the target channel.
-
-Fixes applied:
-  HR-3: copy_media_group fallback now passes parse_mode=HTML so captions
-        with HTML formatting are rendered correctly.
-  HR-4: Watermarked media group uses InputMediaDocument for documents/audio
-        instead of incorrectly wrapping them in InputMediaVideo.
-  FIX-PEER: PeerIdInvalid is now handled as a RECOVERABLE error, not a
-        permanent failure.  On first occurrence the sender attempts to
-        resolve the target peer via get_chat() and retries once.  If the
-        retry also fails the exception is re-raised so the posting_worker
-        can re-queue the item as "pending" instead of marking it "failed".
-"""
-
 import asyncio
 import io
 import math
@@ -46,6 +31,20 @@ _WATERMARK_FONT_SCALE: float = float(getattr(settings, "WATERMARK_FONT_SCALE", 0
 
 _WATERMARK_ENABLED: bool = _PIL_AVAILABLE and bool(_WATERMARK_TEXT)
 
+# Startup diagnostic — always visible in Railway logs
+if _WATERMARK_ENABLED:
+    logger.info(
+        f"Watermark ENABLED: text='{_WATERMARK_TEXT}' "
+        f"opacity={_WATERMARK_OPACITY} count={_WATERMARK_COUNT} "
+        f"rotation={_WATERMARK_ROTATION} font_scale={_WATERMARK_FONT_SCALE}"
+    )
+elif not _PIL_AVAILABLE:
+    logger.warning("Watermark DISABLED: Pillow not installed.")
+elif not _WATERMARK_TEXT:
+    logger.warning(
+        "Watermark DISABLED: WATERMARK env var is empty. "
+        "Set WATERMARK=@yourchannel in Railway variables then redeploy."
+    )
 
 # ---------------------------------------------------------------------------
 # Watermark core  (CPU-bound — called via run_in_executor)

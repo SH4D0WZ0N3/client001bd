@@ -1,38 +1,24 @@
-"""
-Database models.
-
-Pydantic v2-compatible ObjectId handling: uses BeforeValidator + Annotated
-instead of the v1-only __get_validators__ classmethod.
-"""
-from __future__ import annotations
-
-from typing import Annotated, Any, List, Optional
+from pydantic import BaseModel, Field, field_validator
+from typing import Optional, List, Any
 from datetime import datetime
-
 from bson import ObjectId
-from pydantic import BaseModel, BeforeValidator, Field
 
 
-# ---------------------------------------------------------------------------
-# Pydantic v2-compatible ObjectId validator
-# ---------------------------------------------------------------------------
+class PyObjectId(ObjectId):
+    @classmethod
+    def __get_validators__(cls):
+        yield cls.validate
 
-def _validate_object_id(v: Any) -> ObjectId:
-    if isinstance(v, ObjectId):
-        return v
-    if ObjectId.is_valid(v):
-        return ObjectId(str(v))
-    raise ValueError(f"Invalid ObjectId value: {v!r}")
+    @classmethod
+    def validate(cls, v, *args, **kwargs):
+        if not ObjectId.is_valid(v):
+            raise ValueError("Invalid ObjectId")
+        return ObjectId(v)
 
+    @classmethod
+    def __get_pydantic_json_schema__(cls, field_schema):
+        field_schema.update(type="string")
 
-# Use Annotated + BeforeValidator — this is the correct Pydantic v2 pattern.
-# It is also Pydantic v1-compatible via the compatibility shim if needed.
-PyObjectId = Annotated[ObjectId, BeforeValidator(_validate_object_id)]
-
-
-# ---------------------------------------------------------------------------
-# Models
-# ---------------------------------------------------------------------------
 
 class QueueItem(BaseModel):
     id: Optional[PyObjectId] = Field(alias="_id", default=None)
@@ -46,11 +32,16 @@ class QueueItem(BaseModel):
     retry_count: int = 0
     error_message: Optional[str] = None
 
-    model_config = {
-        "arbitrary_types_allowed": True,
-        "populate_by_name": True,   # allow both alias and field name
-        "json_encoders": {ObjectId: str},
-    }
+    @field_validator("media_group_id", mode="before")
+    @classmethod
+    def coerce_media_group_id(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        return str(v)
+
+    class Config:
+        arbitrary_types_allowed = True
+        json_encoders = {ObjectId: str}
 
 
 class State(BaseModel):
@@ -59,11 +50,9 @@ class State(BaseModel):
     daily_sent_count: int = 0
     last_reset_date: str = ""
 
-    model_config = {
-        "arbitrary_types_allowed": True,
-        "populate_by_name": True,
-        "json_encoders": {ObjectId: str},
-    }
+    class Config:
+        arbitrary_types_allowed = True
+        json_encoders = {ObjectId: str}
 
 
 class SentLog(BaseModel):
@@ -74,8 +63,6 @@ class SentLog(BaseModel):
     sent_at: datetime = Field(default_factory=datetime.utcnow)
     status: str
 
-    model_config = {
-        "arbitrary_types_allowed": True,
-        "populate_by_name": True,
-        "json_encoders": {ObjectId: str},
-    }
+    class Config:
+        arbitrary_types_allowed = True
+        json_encoders = {ObjectId: str}
