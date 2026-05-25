@@ -112,16 +112,21 @@ def _load_font(font_size: int):
 def _make_text_stamp(
     text: str, font, opacity: int, rotation: int
 ) -> "Image.Image":
-    """Create a rotated, semi-transparent RGBA stamp of the watermark text."""
     scratch = Image.new("RGBA", (1, 1))
     draw = ImageDraw.Draw(scratch)
     bbox = draw.textbbox((0, 0), text, font=font)
-    tw = bbox[2] - bbox[0] + 20
-    th = bbox[3] - bbox[1] + 20
+    tw = bbox[2] - bbox[0] + 40
+    th = bbox[3] - bbox[1] + 40
 
     txt_img = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
     d = ImageDraw.Draw(txt_img)
-    d.text((10, 10), text, font=font, fill=(255, 255, 255, opacity))
+    # Black stroke makes white text visible on ANY background
+    d.text(
+        (20, 20), text, font=font,
+        fill=(255, 255, 255, opacity),
+        stroke_width=3,
+        stroke_fill=(0, 0, 0, opacity),
+    )
     return txt_img.rotate(rotation, expand=True, resample=Image.BICUBIC)
 
 
@@ -435,7 +440,7 @@ class TelegramSender:
 
         # ── Watermark path (photos only) ──────────────────────────────────────
         if original.photo and _WATERMARK_ENABLED:
-            logger.debug(f"Attempting watermarked send for message {item.message_id}…")
+            logger.info(f"Attempting watermarked send for message {item.message_id}…")
             temp_path = await self._download_and_watermark(original)
 
             if temp_path:
@@ -485,7 +490,6 @@ class TelegramSender:
             from_chat_id=settings.SOURCE_CHANNEL_ID,
             message_id=item.message_id,
             caption=caption,
-            parse_mode=enums.ParseMode.HTML,
         )
         return [sent]
 
@@ -632,6 +636,5 @@ class TelegramSender:
             from_chat_id=settings.SOURCE_CHANNEL_ID,
             message_id=valid[0].id,
             captions=captions,
-            parse_mode=enums.ParseMode.HTML,
         )
         return sent

@@ -23,6 +23,7 @@ class Settings(BaseSettings):
 
     # MongoDB
     MONGO_URI: str
+    MONGO_DB: str = "telegram_bot"
 
     # Channels
     SOURCE_CHANNEL_ID: int
@@ -34,12 +35,16 @@ class Settings(BaseSettings):
 
     # Watermark text drawn on photos.
     # Leave empty ("") to disable watermarking entirely.
-    # WATERMARK_TEXT was removed — use WATERMARK only to avoid confusion.
     WATERMARK: str = ""
 
     # Watermark appearance
     WATERMARK_COUNT: int = 4
-    WATERMARK_OPACITY: int = 30
+
+    # FIX: was 30 (12% alpha — nearly invisible on any background).
+    # Raised to 90 (35% alpha) — clearly visible without being intrusive.
+    # Set higher (e.g. 128 = 50%, 200 = 78%) for a bolder watermark.
+    WATERMARK_OPACITY: int = 90
+
     WATERMARK_ROTATION: int = -35
     WATERMARK_FONT_SCALE: float = 0.04
 
@@ -48,6 +53,9 @@ class Settings(BaseSettings):
     SEND_INTERVAL_SECONDS: int
     START_MESSAGE_ID: int = 1
     TIMEZONE: str = "UTC"
+
+    # Session directory — set by Dockerfile ENV, override via env var if needed
+    SESSION_DIR: str = "/app/sessions"
 
     model_config = SettingsConfigDict(
         env_file=".env",

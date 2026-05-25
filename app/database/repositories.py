@@ -2,7 +2,7 @@ from motor.motor_asyncio import AsyncIOMotorCollection
 from bson import ObjectId
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
-from app.database.database import get_database
+from app.database.database import get_db
 from app.database.models import QueueItem, State, SentLog
 from typing import Optional
 from datetime import datetime, date
@@ -17,7 +17,7 @@ class BaseRepository:
     @property
     def collection(self) -> AsyncIOMotorCollection:
         if self._collection is None:
-            self._collection = get_database()[self._collection_name]
+            self._collection = get_db()[self._collection_name]
         return self._collection
 
 
@@ -48,10 +48,6 @@ class QueueRepository(BaseRepository):
         return QueueItem(**raw)
 
     async def recover_stale_processing_items(self) -> int:
-        """
-        On startup, reset any items stuck in 'processing' from a previous
-        crashed run. Returns the count of recovered items.
-        """
         result = await self.collection.update_many(
             {"status": "processing"},
             {"$set": {"status": "pending", "scheduled_at": None}},
@@ -65,22 +61,6 @@ class QueueRepository(BaseRepository):
         return count
 
     async def recover_send_failed_items(self, max_retry_count: int = 10) -> int:
-        """
-        Reset items that were marked failed because send_item() returned False.
-
-        This error_message signature ("send_item() returned False") is set by
-        the posting_worker when the sender returns False without raising.  The
-        primary cause is PeerIdInvalid — the Pyrogram session hadn't cached the
-        target peer yet.  After the peer is resolved at startup these items will
-        send normally on retry.
-
-        Genuine permanent failures (deleted messages, wrong channel, etc.) will
-        simply fail again and accumulate retry_count until they exceed the
-        max_retry_count threshold and are left failed.
-
-        max_retry_count=10 is deliberately generous; adjust down if you want
-        faster give-up on truly broken items.
-        """
         result = await self.collection.update_many(
             {
                 "status": "failed",
@@ -173,6 +153,26 @@ class StateRepository(BaseRepository):
                 "$setOnInsert": {
                     "daily_sent_count": 0,
                     "last_reset_date": date.today().isoformat(),
+                },
+            },
+            upsert=True,
+        )
+
+    async def mark_scan_completed(self) -> None:
+        """
+        RC-2 fix: set scan_completed=True in the state document.
+        Called only after bootstrap finishes successfully.
+        bootstrap.py uses this flag (not the cursor) to decide whether
+        to skip the scan on the next restart.
+        """
+        await self.collection.update_one(
+            {"_id": self.state_id},
+            {
+                "$set": {"scan_completed": True},
+                "$setOnInsert": {
+                    "daily_sent_count": 0,
+                    "last_reset_date": date.today().isoformat(),
+                    "last_processed_message_id": 0,
                 },
             },
             upsert=True,

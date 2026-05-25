@@ -7,7 +7,7 @@ import motor.motor_asyncio
 from bson import ObjectId
 from loguru import logger
 
-from app.config import settings
+from app.utils.config import settings
 
 # ── Module-level singletons ───────────────────────────────────────────────────
 _client: Optional[motor.motor_asyncio.AsyncIOMotorClient] = None
@@ -50,7 +50,7 @@ async def ensure_indexes() -> None:
 
     await db.queue.create_index("status")
     await db.queue.create_index("created_at")
-    await db.queue.create_index("source_message_id", unique=True)
+    await db.queue.create_index("message_id", unique=True, sparse=True)
     await db.queue.create_index([("status", 1), ("created_at", 1)])
 
     # Scan state: only one document ever exists

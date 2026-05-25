@@ -253,4 +253,4 @@ if __name__ == "__main__":
     except (KeyboardInterrupt, SystemExit):
         pass
     except BaseException as exc:
-        logger.critical(f"Fatal error: {exc}", exc_info=True)
+        logger.opt(exception=True).critical("Fatal error: {}", str(exc).replace("{", "{{").replace("}", "}}"))

@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field
-from typing import Optional, List
+from pydantic import BaseModel, Field, field_validator
+from typing import Optional, List, Any
 from datetime import datetime
 from bson import ObjectId
 
@@ -32,6 +32,13 @@ class QueueItem(BaseModel):
     retry_count: int = 0
     error_message: Optional[str] = None
 
+    @field_validator("media_group_id", mode="before")
+    @classmethod
+    def coerce_media_group_id(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        return str(v)
+
     class Config:
         arbitrary_types_allowed = True
         json_encoders = {ObjectId: str}
@@ -42,6 +49,7 @@ class State(BaseModel):
     last_processed_message_id: int = 0
     daily_sent_count: int = 0
     last_reset_date: str = ""
+    scan_completed: bool = False  # RC-2: true only after bootstrap finishes
 
     class Config:
         arbitrary_types_allowed = True
