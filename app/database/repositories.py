@@ -178,18 +178,61 @@ class StateRepository(BaseRepository):
             upsert=True,
         )
 
-    async def reset_daily_counter(self) -> None:
-        today = date.today().isoformat()
+    async def reset_daily_counter(self, today: Optional[str] = None) -> None:
+        """
+        Reset daily_sent_count to 0 and record today's date.
+
+        ``today`` should be the timezone-aware date string produced by
+        posting_worker._today_str() so the stored date matches the same
+        timezone used for the limit check.  Falls back to UTC if omitted
+        (e.g. when called from contexts that don't have a tz-aware date).
+        """
+        today_str = today if today is not None else date.today().isoformat()
         await self.collection.update_one(
             {"_id": self.state_id},
             {
-                "$set": {"daily_sent_count": 0, "last_reset_date": today},
+                "$set": {"daily_sent_count": 0, "last_reset_date": today_str},
                 "$setOnInsert": {"last_processed_message_id": 0},
             },
             upsert=True,
         )
 
+    async def try_increment_daily_sent_count(self, today: str, limit: int) -> bool:
+        """
+        Atomically increment daily_sent_count only if:
+          - last_reset_date matches ``today`` (no stale date from a dropped collection), AND
+          - daily_sent_count is strictly below ``limit``.
+
+        Returns True if the increment succeeded (send is allowed).
+        Returns False if the limit has already been reached.
+
+        A single find_one_and_update makes this race-free against concurrent
+        containers and rapid restarts.
+        """
+        result = await self.collection.find_one_and_update(
+            {
+                "_id": self.state_id,
+                "last_reset_date": today,
+                "$expr": {"$lt": ["$daily_sent_count", limit]},
+            },
+            {"$inc": {"daily_sent_count": 1}},
+            return_document=ReturnDocument.AFTER,
+        )
+        return result is not None
+
+    async def decrement_daily_sent_count(self) -> None:
+        """
+        Undo a previously applied increment (e.g. when a send fails after
+        the counter was already bumped).  Clamps at 0 to avoid negative
+        counts if called spuriously.
+        """
+        await self.collection.update_one(
+            {"_id": self.state_id, "daily_sent_count": {"$gt": 0}},
+            {"$inc": {"daily_sent_count": -1}},
+        )
+
     async def increment_daily_sent_count(self) -> None:
+        """Legacy unconditional increment — prefer try_increment_daily_sent_count."""
         await self.collection.update_one(
             {"_id": self.state_id},
             {"$inc": {"daily_sent_count": 1}},
