@@ -59,7 +59,7 @@ async def posting_job(sender: TelegramSender) -> None:
 
     if state is None or state.last_reset_date != today_str:
         logger.info(f"New day ({today_str}). Resetting daily sent counter.")
-        await state_repo.reset_daily_counter()
+        await state_repo.reset_daily_counter(today_str)
         # No need to re-read state here; try_increment handles the date check.
 
     # ── Dequeue ───────────────────────────────────────────────────────────────
