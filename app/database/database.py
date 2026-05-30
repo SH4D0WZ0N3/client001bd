@@ -63,9 +63,8 @@ async def ensure_indexes() -> None:
     # daily stats
     await db.daily_stats.create_index([("date", 1), ("key", 1)], unique=True)
 
-    # vault replay state — single document, _id is already indexed by MongoDB,
-    # but explicit declaration makes the intent clear and future-proof.
-    await db.vault_replay_state.create_index("_id", unique=True)
+    # vault_replay_state: _id is already unique by MongoDB default.
+    # No additional indexes needed — it's a single-document collection.
 
     logger.info("MongoDB indexes ensured.")
 
