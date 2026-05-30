@@ -28,7 +28,6 @@ async def connect_to_mongo() -> None:
         settings.MONGO_URI,
         serverSelectionTimeoutMS=10_000,
     )
-    # Validate connection
     await _client.admin.command("ping")
     _db = _client[settings.MONGO_DB]
     logger.info(f"MongoDB connected. Database: '{settings.MONGO_DB}'")
@@ -48,16 +47,25 @@ async def ensure_indexes() -> None:
     db = get_db()
     logger.info("Ensuring MongoDB indexes...")
 
+    # queue
     await db.queue.create_index("status")
     await db.queue.create_index("created_at")
     await db.queue.create_index("message_id", unique=True, sparse=True)
     await db.queue.create_index([("status", 1), ("created_at", 1)])
 
-    # Scan state: only one document ever exists
+    # Compound index to make vault queries fast:
+    # status filter + _id projection = covered index, no collection scan.
+    await db.queue.create_index([("status", 1), ("_id", 1)])
+
+    # scan state
     await db.scan_state.create_index("key", unique=True)
 
-    # Daily stats: (date, key) is unique
+    # daily stats
     await db.daily_stats.create_index([("date", 1), ("key", 1)], unique=True)
+
+    # vault replay state — single document, _id is already indexed by MongoDB,
+    # but explicit declaration makes the intent clear and future-proof.
+    await db.vault_replay_state.create_index("_id", unique=True)
 
     logger.info("MongoDB indexes ensured.")
 
@@ -71,7 +79,7 @@ async def insert_queue_item(item_dict: dict) -> str:
         return str(result.inserted_id)
     except Exception as exc:
         if "duplicate key" in str(exc).lower() or "E11000" in str(exc):
-            return None   # already queued — not an error
+            return None
         raise
 
 
